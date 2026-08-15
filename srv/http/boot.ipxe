@@ -1,0 +1,54 @@
+#!ipxe
+
+# Global Variables (dynamically populated by start-server.sh)
+set server_ip 192.168.1.41
+set http_port 8080
+set http_base http://${server_ip}:${http_port}
+
+# Console styling
+cpair --foreground 7 --background 4 2
+cpair --foreground 0 --background 7 3
+
+:menu
+menu Network OS Installer (Host: ${server_ip})
+item --gap --             ------------------------- Windows Installation -------------------------
+item win_install          Install Windows (PE + Automated Network Setup)
+item win_recovery         Windows PE Recovery Command Prompt
+item --gap --             ------------------------- Local Actions --------------------------------
+item boot_local           Boot from Local Hard Drive / NVMe
+item ipxe_shell           Drop to iPXE Shell
+item reboot               Reboot Client PC
+choose --timeout 15000 --default win_install target && goto ${target}
+
+:win_install
+echo Initializing Windows Network Installer over HTTP...
+echo Server: ${http_base}
+kernel ${http_base}/boot/wimboot
+initrd -n bcd         ${http_base}/boot/BCD        bcd
+initrd -n boot.sdi    ${http_base}/boot/boot.sdi   boot.sdi
+initrd -n boot.wim    ${http_base}/boot/boot.wim   boot.wim
+boot || goto failed
+
+:win_recovery
+echo Loading Windows PE Environment...
+kernel ${http_base}/boot/wimboot
+initrd -n bcd         ${http_base}/boot/BCD        bcd
+initrd -n boot.sdi    ${http_base}/boot/boot.sdi   boot.sdi
+initrd -n boot.wim    ${http_base}/boot/boot.wim   boot.wim
+boot || goto failed
+
+:boot_local
+echo Booting from local disk...
+exit 1
+
+:ipxe_shell
+shell
+goto menu
+
+:reboot
+reboot
+
+:failed
+echo [ERROR] Booting failed. Press any key to return to menu.
+prompt
+goto menu
