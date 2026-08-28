@@ -7,8 +7,9 @@ from typing import List, Tuple, Dict, Any
 def get_network_interfaces() -> List[Tuple[str, str, bool]]:
     """
     Returns a list of tuples: (interface_name, ip_address, is_default)
+    Detects all wired Ethernet and Wi-Fi interfaces even if unconfigured.
     """
-    interfaces = []
+    interfaces_map = {}
     default_iface = ""
 
     # Detect default route interface
@@ -21,7 +22,8 @@ def get_network_interfaces() -> List[Tuple[str, str, bool]]:
     except Exception:
         pass
 
-    # Enumerate all active IPv4 interfaces
+    # Query assigned IPv4 addresses to detect existing subnets (e.g. Wi-Fi)
+    existing_subnets = set()
     try:
         res = subprocess.run(['ip', '-br', '-4', 'addr'], capture_output=True, text=True, timeout=2)
         if res.returncode == 0:
@@ -32,19 +34,61 @@ def get_network_interfaces() -> List[Tuple[str, str, bool]]:
                 parts = line.split()
                 if len(parts) >= 3:
                     iface = parts[0]
-                    state = parts[1]
                     ip_cidr = parts[2]
                     ip = ip_cidr.split('/')[0]
-                    if iface != 'lo' and state.upper() == 'UP':
-                        is_def = (iface == default_iface)
-                        interfaces.append((iface, ip, is_def))
+                    if iface != 'lo' and not any(iface.startswith(p) for p in ['enp', 'eth', 'eno', 'ens']):
+                        # Record Wi-Fi / WAN subnet
+                        subnet_prefix = ".".join(ip.split(".")[:3])
+                        existing_subnets.add(subnet_prefix)
+                    interfaces_map[iface] = ip
     except Exception:
         pass
 
-    if not interfaces:
-        interfaces.append(('enp3s0', '192.168.1.41', True))
+    # 1. Enumerate all system network links
+    try:
+        res = subprocess.run(['ip', '-br', 'link'], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0:
+            for line in res.stdout.strip().split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if parts:
+                    iface = parts[0]
+                    if iface != 'lo' and not iface.startswith(('docker', 'veth', 'br-', 'virbr')):
+                        is_wired = any(iface.startswith(p) for p in ['enp', 'eth', 'eno', 'ens'])
+                        if is_wired:
+                            # If Wi-Fi is on 192.168.1.x, use 192.168.42.1 for wired Ethernet to prevent routing collision
+                            if "192.168.1" in existing_subnets:
+                                wired_ip = "192.168.42.1"
+                            else:
+                                wired_ip = "192.168.1.41"
+                            # Override if wired interface currently has an overlapping IP
+                            current_ip = interfaces_map.get(iface, "")
+                            if not current_ip or ("192.168.1" in existing_subnets and current_ip.startswith("192.168.1.")):
+                                interfaces_map[iface] = wired_ip
+                        elif iface not in interfaces_map:
+                            interfaces_map[iface] = "192.168.1.7"
+    except Exception:
+        pass
 
-    return interfaces
+    # Build sorted result list (Wired interfaces first, default selected)
+    result = []
+    for iface, ip in interfaces_map.items():
+        if iface == 'lo':
+            continue
+        is_wired = any(iface.startswith(p) for p in ['enp', 'eth', 'eno', 'ens'])
+        # If wired interface exists, ONLY wired interface should be default
+        has_wired = any(any(k.startswith(p) for p in ['enp', 'eth', 'eno', 'ens']) for k in interfaces_map.keys() if k != 'lo')
+        is_def = is_wired if has_wired else (iface == default_iface)
+        result.append((iface, ip, is_def))
+
+    result.sort(key=lambda x: (0 if any(x[0].startswith(p) for p in ['enp', 'eth', 'eno', 'ens']) else 1))
+
+    if not result:
+        result.append(('enp3s0', '192.168.1.41', True))
+
+    return result
 
 
 def check_dependencies(base_dir: Path) -> Dict[str, Dict[str, Any]]:

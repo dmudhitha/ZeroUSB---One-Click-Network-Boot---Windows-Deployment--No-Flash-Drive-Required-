@@ -1,0 +1,88 @@
+# ==============================================================================
+# ZeroUSB (Network-Installer) - Git Ignore Configuration
+# ==============================================================================
+
+# Python bytecode, cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & Runtime Process IDs
+logs/*
+!logs/.gitkeep
+*.log
+.run/
+*.pid
+
+# Temporary Files & Dumps
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+tmp/
+/tmp/
+
+# OS Images, Installers & Large Deployment Payloads (GBs)
+*.iso
+*.img
+*.wim
+*.esd
+*.swm
+*.vhd
+*.vhdx
+*.qcow2
+
+# Dynamic Extracted OS Directories in Samba & HTTP
+srv/samba/*
+!srv/samba/.gitkeep
+srv/http/images/*
+!srv/http/images/.gitkeep
+
+# Dynamic Extracted Windows / Linux Boot Directories
+srv/http/boot/win*
+srv/http/boot/ubuntu*
+srv/http/boot/linux*
+srv/http/boot/mint*
+srv/http/boot/debian*
+srv/http/boot/custom*
+srv/http/boot/boot.wim
+srv/http/boot/install.wim
+
+# User Runtime Dynamic Database / Profiles
+config/installed_os.json
+
+# Operating System & Editor Artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace

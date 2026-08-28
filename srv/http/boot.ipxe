@@ -1,45 +1,48 @@
 #!ipxe
-
-# Global Variables (dynamically populated by start-server.sh)
-set server_ip 192.168.1.41
+ 
+set server_ip 192.168.42.1
 set http_port 8080
 set http_base http://${server_ip}:${http_port}
 
-# Console styling
-cpair --foreground 7 --background 4 2
-cpair --foreground 0 --background 7 3
+# Architecture auto-detection (Dual-Mode: UEFI 64-bit vs BIOS 32-bit CSM)
+iseq ${platform} efi && goto mode_uefi || goto mode_bios
+
+:mode_uefi
+set mode_label UEFI (64-bit)
+set wimboot_file wimboot.x86_64
+set bootmgr_file bootmgr.efi
+set bootmgr_name bootmgr.efi
+goto menu
+
+:mode_bios
+set mode_label Legacy BIOS / CSM (32-bit)
+set wimboot_file wimboot.i386
+set bootmgr_file bootmgr
+set bootmgr_name bootmgr
+goto menu
 
 :menu
-menu Network OS Installer (Host: ${server_ip})
-item --gap --             ------------------------- Windows Installation -------------------------
-item win_install          Install Windows (PE + Automated Network Setup)
-item win_recovery         Windows PE Recovery Command Prompt
-item --gap --             ------------------------- Local Actions --------------------------------
-item boot_local           Boot from Local Hard Drive / NVMe
-item ipxe_shell           Drop to iPXE Shell
-item reboot               Reboot Client PC
-choose --timeout 15000 --default win_install target && goto ${target}
+menu ZeroUSB - Universal Deployment Server [Active Mode: ${mode_label}]
+item --gap --             [ TIP: Press 1, 2, 3, 4, H, or R directly to select ]
+item --gap --             ------------------ Operating Systems -------------------
+item --gap --             [!] No Operating Systems staged yet!
+item no_os                (Please stage an ISO from ZeroUSB app)
+item --gap --             ------------------ Local Actions -----------------------
+item --key h boot_local           [H] Boot from Local Storage (SSD / NVMe / HDD)
+item --key d ipxe_shell           [D] iPXE Diagnostic Shell
+item --key r reboot               [R] Reboot Computer
+choose --timeout 30000 --default boot_local target && goto ${target}
 
-:win_install
-echo Initializing Windows Network Installer over HTTP...
-echo Server: ${http_base}
-kernel ${http_base}/boot/wimboot
-initrd -n bcd         ${http_base}/boot/BCD        bcd
-initrd -n boot.sdi    ${http_base}/boot/boot.sdi   boot.sdi
-initrd -n boot.wim    ${http_base}/boot/boot.wim   boot.wim
-boot || goto failed
 
-:win_recovery
-echo Loading Windows PE Environment...
-kernel ${http_base}/boot/wimboot
-initrd -n bcd         ${http_base}/boot/BCD        bcd
-initrd -n boot.sdi    ${http_base}/boot/boot.sdi   boot.sdi
-initrd -n boot.wim    ${http_base}/boot/boot.wim   boot.wim
-boot || goto failed
+
+:no_os
+echo [!] No operating systems currently installed in ZeroUSB.
+prompt Press any key to return to menu...
+goto menu
 
 :boot_local
-echo Booting from local disk...
-exit 1
+echo Booting from local hard drive (Drive 0x80)...
+sanboot --no-describe --drive 0x80 || exit 0
 
 :ipxe_shell
 shell
@@ -49,6 +52,7 @@ goto menu
 reboot
 
 :failed
-echo [ERROR] Booting failed. Press any key to return to menu.
-prompt
+echo.
+echo [ERROR] Network booting failed for selected OS.
+prompt Press any key to return to ZeroUSB menu...
 goto menu

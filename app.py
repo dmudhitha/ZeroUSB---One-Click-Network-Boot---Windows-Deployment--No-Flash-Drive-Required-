@@ -10,6 +10,8 @@
 import os
 import sys
 import time
+import shutil
+import subprocess
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
@@ -25,7 +27,7 @@ from backend.detector import get_network_interfaces, check_dependencies, check_s
 from backend.server_manager import ServerManager
 from backend.installer import DependencyInstaller
 from backend.network_monitor import NetworkMonitor
-from backend.os_manager import OSManager, OS_PRESETS
+from backend.os_manager import OSManager, OS_PRESETS, OS_CATEGORIES, get_presets_by_category, TYPE_CATEGORY_MAP, detect_os_from_iso
 
 # Configure CustomTkinter Appearance
 ctk.set_appearance_mode("dark")
@@ -63,7 +65,10 @@ class NetworkInstallerApp(ctk.CTk):
         self.selected_interface_var = ctk.StringVar()
         self.selected_ip_var = ctk.StringVar(value="192.168.1.41")
         self.http_port_var = ctk.StringVar(value="8080")
+        self.dhcp_mode_var = ctk.StringVar(value="ProxyDHCP (Connected to Router)")
+        self.boot_target_mode_var = ctk.StringVar(value="⚡ Dual Mode (Auto-Detect CSM & UEFI)")
         self.iso_path_var = ctk.StringVar()
+        self.selected_category_var = ctk.StringVar(value="All Systems")
         self.selected_preset_var = ctk.StringVar(value="Windows 10 (64-bit)")
         self.selected_remove_os_var = ctk.StringVar()
 
@@ -197,6 +202,49 @@ class NetworkInstallerApp(ctk.CTk):
         )
         refresh_btn.pack(side="right", padx=(6, 0))
 
+        # DHCP Mode Selector Row
+        dhcp_mode_row = ctk.CTkFrame(left_card, fg_color="transparent")
+        dhcp_mode_row.pack(fill="x", padx=16, pady=(0, 6))
+
+        ctk.CTkLabel(dhcp_mode_row, text="DHCP:", font=ctk.CTkFont(family="Inter", size=11), text_color=THEME["text_secondary"]).pack(side="left", padx=(0, 6))
+
+        self.dhcp_mode_menu = ctk.CTkOptionMenu(
+            dhcp_mode_row,
+            variable=self.dhcp_mode_var,
+            values=[
+                "ProxyDHCP (Connected to Router)",
+                "Standalone DHCP (Direct PC Cable)"
+            ],
+            fg_color=THEME["surface"],
+            button_color=THEME["card_border"],
+            button_hover_color=THEME["card_hover"],
+            dynamic_resizing=False,
+            height=30
+        )
+        self.dhcp_mode_menu.pack(side="left", fill="x", expand=True)
+
+        # Boot Target Mode Selector Row (CSM vs UEFI)
+        boot_mode_row = ctk.CTkFrame(left_card, fg_color="transparent")
+        boot_mode_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        ctk.CTkLabel(boot_mode_row, text="Target:", font=ctk.CTkFont(family="Inter", size=11), text_color=THEME["text_secondary"]).pack(side="left", padx=(0, 6))
+
+        self.boot_mode_menu = ctk.CTkOptionMenu(
+            boot_mode_row,
+            variable=self.boot_target_mode_var,
+            values=[
+                "⚡ Dual Mode (Auto-Detect CSM & UEFI)",
+                "🛡️ Pure CSM / Legacy BIOS Mode",
+                "🚀 Pure Native UEFI 64-bit Mode"
+            ],
+            fg_color=THEME["surface"],
+            button_color=THEME["card_border"],
+            button_hover_color=THEME["card_hover"],
+            dynamic_resizing=False,
+            height=30
+        )
+        self.boot_mode_menu.pack(side="left", fill="x", expand=True)
+
         # Live Service Health Sub-Card
         services_box = ctk.CTkFrame(left_card, fg_color=THEME["surface"], corner_radius=8, border_width=1, border_color=THEME["card_border"])
         services_box.pack(fill="x", padx=16, pady=(0, 10))
@@ -241,6 +289,32 @@ class NetworkInstallerApp(ctk.CTk):
             text_color=THEME["text_secondary"],
             justify="left"
         ).pack(anchor="w", padx=16, pady=(0, 8))
+
+        # Quick Actions & Tools Toolbar
+        tools_row = ctk.CTkFrame(right_card, fg_color="transparent")
+        tools_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        btn_sniff = ctk.CTkButton(
+            tools_row,
+            text="📡 Live Packet Sniffer",
+            font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
+            fg_color=THEME["surface"],
+            hover_color=THEME["card_hover"],
+            height=30,
+            command=self._launch_packet_sniffer
+        )
+        btn_sniff.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        btn_shares = ctk.CTkButton(
+            tools_row,
+            text="📂 Open Server Folder",
+            font=ctk.CTkFont(family="Inter", size=11),
+            fg_color=THEME["surface"],
+            hover_color=THEME["card_hover"],
+            height=30,
+            command=self._open_boot_folder
+        )
+        btn_shares.pack(side="right", fill="x", expand=True, padx=(4, 0))
 
         # Staged Operating Systems Box
         self.dashboard_os_box = ctk.CTkFrame(right_card, fg_color=THEME["surface"], corner_radius=8, border_width=1, border_color=THEME["card_border"])
@@ -294,8 +368,25 @@ class NetworkInstallerApp(ctk.CTk):
         preset_row = ctk.CTkFrame(card_add, fg_color="transparent")
         preset_row.pack(fill="x", padx=20, pady=(0, 10))
 
-        ctk.CTkLabel(preset_row, text="Target OS Profile:", font=ctk.CTkFont(family="Inter", size=12), text_color=THEME["text_secondary"]).pack(side="left", padx=(0, 8))
-        
+        # Category Selector Dropdown
+        ctk.CTkLabel(preset_row, text="Category:", font=ctk.CTkFont(family="Inter", size=12, weight="bold"), text_color=THEME["text_secondary"]).pack(side="left", padx=(0, 6))
+
+        self.category_menu = ctk.CTkOptionMenu(
+            preset_row,
+            variable=self.selected_category_var,
+            values=OS_CATEGORIES,
+            command=self._on_category_changed,
+            fg_color=THEME["surface"],
+            button_color=THEME["primary"],
+            button_hover_color=THEME["primary_hover"],
+            height=34,
+            width=135
+        )
+        self.category_menu.pack(side="left", padx=(0, 14))
+
+        # Target Profile Selector Dropdown
+        ctk.CTkLabel(preset_row, text="Target OS Profile:", font=ctk.CTkFont(family="Inter", size=12), text_color=THEME["text_secondary"]).pack(side="left", padx=(0, 6))
+
         preset_names = [p["name"] for p in OS_PRESETS]
         self.preset_menu = ctk.CTkOptionMenu(
             preset_row,
@@ -305,9 +396,9 @@ class NetworkInstallerApp(ctk.CTk):
             button_color=THEME["primary"],
             button_hover_color=THEME["primary_hover"],
             height=34,
-            width=260
+            width=280
         )
-        self.preset_menu.pack(side="left")
+        self.preset_menu.pack(side="left", fill="x", expand=True)
 
         # ISO Path Row
         iso_row = ctk.CTkFrame(card_add, fg_color="transparent")
@@ -539,17 +630,20 @@ class NetworkInstallerApp(ctk.CTk):
 
         self.iface_menu.configure(values=options)
 
+        # Always prioritize wired Ethernet interface (enp, eth, eno, ens) for PXE deployment
+        selected_tuple = None
         for iface, ip, is_def in interfaces:
-            if is_def:
-                opt_str = f"{iface} - {ip}"
-                self.selected_interface_var.set(opt_str)
-                self.selected_ip_var.set(ip)
-                self.network_monitor.set_interface(iface)
+            if any(iface.startswith(p) for p in ['enp', 'eth', 'eno', 'ens']):
+                selected_tuple = (iface, ip)
                 break
-        if not self.selected_interface_var.get() and options:
-            self.selected_interface_var.set(options[0])
-            self.selected_ip_var.set(interfaces[0][1])
-            self.network_monitor.set_interface(interfaces[0][0])
+        if not selected_tuple and interfaces:
+            selected_tuple = (interfaces[0][0], interfaces[0][1])
+
+        if selected_tuple:
+            opt_str = f"{selected_tuple[0]} - {selected_tuple[1]}"
+            self.selected_interface_var.set(opt_str)
+            self.selected_ip_var.set(selected_tuple[1])
+            self.network_monitor.set_interface(selected_tuple[0])
 
         self.log(f"[*] Detected network interfaces: {', '.join(options)}")
 
@@ -603,7 +697,10 @@ class NetworkInstallerApp(ctk.CTk):
         for widget in self.dashboard_os_box.winfo_children():
             widget.destroy()
 
-        ctk.CTkLabel(self.dashboard_os_box, text="Available Boot Menu Images", font=ctk.CTkFont(family="Inter", size=12, weight="bold"), text_color=THEME["text_primary"]).pack(anchor="w", padx=12, pady=(10, 4))
+        header_row = ctk.CTkFrame(self.dashboard_os_box, fg_color="transparent")
+        header_row.pack(fill="x", padx=12, pady=(10, 4))
+        ctk.CTkLabel(header_row, text="Available Boot Menu Images", font=ctk.CTkFont(family="Inter", size=12, weight="bold"), text_color=THEME["text_primary"]).pack(side="left")
+        ctk.CTkLabel(header_row, text="[ #1 is Auto-Boot Default ]", font=ctk.CTkFont(family="Inter", size=10), text_color=THEME["accent"]).pack(side="right")
 
         if not installed:
             ctk.CTkLabel(self.os_list_container, text="No operating systems staged yet. Add one above!", font=ctk.CTkFont(family="Inter", size=12), text_color=THEME["text_muted"]).pack(padx=16, pady=16)
@@ -613,14 +710,96 @@ class NetworkInstallerApp(ctk.CTk):
             self.btn_remove_os.configure(state="disabled")
         else:
             remove_options = []
-            for item in installed:
-                # Add row in Multi-OS Manager tab
-                row = ctk.CTkFrame(self.os_list_container, fg_color="transparent")
-                row.pack(fill="x", padx=14, pady=5)
+            total_count = len(installed)
 
+            for idx, item in enumerate(installed):
+                slug = item["slug"]
                 icon = "🪟" if item["type"] == "windows" else "🐧"
+                is_default = (idx == 0)
+
+                # =========================================================
+                # 1. Dashboard Row: Available Boot Menu Images
+                # =========================================================
+                d_row = ctk.CTkFrame(self.dashboard_os_box, fg_color=THEME["surface"] if is_default else "transparent", corner_radius=6)
+                d_row.pack(fill="x", padx=10, pady=2)
+
+                # Boot index badge [1], [2], etc.
+                idx_badge = ctk.CTkLabel(
+                    d_row,
+                    text=f"[{idx + 1}] DEFAULT" if is_default else f"[{idx + 1}]",
+                    font=ctk.CTkFont(family="Inter", size=10, weight="bold"),
+                    text_color=THEME["success"] if is_default else THEME["text_secondary"],
+                    fg_color=THEME["success_bg"] if is_default else THEME["card_bg"],
+                    corner_radius=4,
+                    padx=6,
+                    pady=2
+                )
+                idx_badge.pack(side="left", padx=(6, 8), pady=4)
+
+                # OS Name label
+                ctk.CTkLabel(
+                    d_row,
+                    text=f"{icon} {item['name']}",
+                    font=ctk.CTkFont(family="Inter", size=11, weight="bold" if is_default else "normal"),
+                    text_color=THEME["text_primary"] if is_default else THEME["text_secondary"],
+                    anchor="w"
+                ).pack(side="left", fill="x", expand=True, pady=4)
+
+                # Reorder Arrow Buttons on Dashboard
+                btn_frame = ctk.CTkFrame(d_row, fg_color="transparent")
+                btn_frame.pack(side="right", padx=(4, 6), pady=2)
+
+                btn_up = ctk.CTkButton(
+                    btn_frame,
+                    text="▲",
+                    width=24,
+                    height=22,
+                    font=ctk.CTkFont(size=9, weight="bold"),
+                    fg_color=THEME["card_bg"] if idx > 0 else THEME["surface"],
+                    hover_color=THEME["card_hover"],
+                    text_color=THEME["text_primary"] if idx > 0 else THEME["text_muted"],
+                    state="normal" if idx > 0 else "disabled",
+                    command=lambda s=slug: self._move_os_priority(s, -1)
+                )
+                btn_up.pack(side="left", padx=1)
+
+                btn_down = ctk.CTkButton(
+                    btn_frame,
+                    text="▼",
+                    width=24,
+                    height=22,
+                    font=ctk.CTkFont(size=9, weight="bold"),
+                    fg_color=THEME["card_bg"] if idx < total_count - 1 else THEME["surface"],
+                    hover_color=THEME["card_hover"],
+                    text_color=THEME["text_primary"] if idx < total_count - 1 else THEME["text_muted"],
+                    state="normal" if idx < total_count - 1 else "disabled",
+                    command=lambda s=slug: self._move_os_priority(s, 1)
+                )
+                btn_down.pack(side="left", padx=1)
+
+                # Size label
+                ctk.CTkLabel(d_row, text=f"({item['size_str']})", font=ctk.CTkFont(family="Inter", size=10), text_color=THEME["text_muted"]).pack(side="right", padx=(0, 4), pady=4)
+
+                # =========================================================
+                # 2. Multi-OS Manager Tab Row
+                # =========================================================
+                row = ctk.CTkFrame(self.os_list_container, fg_color=THEME["surface"] if is_default else "transparent", corner_radius=6)
+                row.pack(fill="x", padx=10, pady=4)
+
+                order_badge = ctk.CTkLabel(
+                    row,
+                    text=f"Boot Target #{idx + 1}" + (" (Default)" if is_default else ""),
+                    font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
+                    text_color=THEME["success"] if is_default else THEME["text_muted"],
+                    fg_color=THEME["success_bg"] if is_default else THEME["card_bg"],
+                    corner_radius=6,
+                    padx=8,
+                    pady=4
+                )
+                order_badge.pack(side="left", padx=(10, 8), pady=8)
+
                 name_box = ctk.CTkFrame(row, fg_color="transparent")
-                name_box.pack(side="left", fill="x", expand=True)
+                name_box.pack(side="left", fill="x", expand=True, pady=6)
 
                 lbl_title = ctk.CTkLabel(name_box, text=f"{icon} {item['name']}", font=ctk.CTkFont(family="Inter", size=12, weight="bold"), text_color=THEME["text_primary"])
                 lbl_title.pack(anchor="w")
@@ -628,31 +807,76 @@ class NetworkInstallerApp(ctk.CTk):
                 lbl_path = ctk.CTkLabel(name_box, text=f"Slug: [{item['slug']}] | Size: {item['size_str']}", font=ctk.CTkFont(family="Inter", size=10), text_color=THEME["text_muted"])
                 lbl_path.pack(anchor="w")
 
-                badge = ctk.CTkLabel(
-                    row,
-                    text="● Staged in Menu",
-                    font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
-                    text_color=THEME["success"],
-                    fg_color=THEME["success_bg"],
-                    corner_radius=6,
-                    padx=8,
-                    pady=3
+                # Action buttons in Multi-OS Tab
+                tab_btn_box = ctk.CTkFrame(row, fg_color="transparent")
+                tab_btn_box.pack(side="right", padx=10, pady=6)
+
+                if not is_default:
+                    btn_make_def = ctk.CTkButton(
+                        tab_btn_box,
+                        text="⭐ Make #1",
+                        width=70,
+                        height=26,
+                        font=ctk.CTkFont(family="Inter", size=11),
+                        fg_color=THEME["accent"],
+                        hover_color=THEME["primary"],
+                        command=lambda s=slug: self._set_os_default(s)
+                    )
+                    btn_make_def.pack(side="left", padx=3)
+
+                btn_tab_up = ctk.CTkButton(
+                    tab_btn_box,
+                    text="▲ Move Up",
+                    width=75,
+                    height=26,
+                    font=ctk.CTkFont(family="Inter", size=11),
+                    fg_color=THEME["card_bg"] if idx > 0 else THEME["surface"],
+                    hover_color=THEME["card_hover"],
+                    text_color=THEME["text_primary"] if idx > 0 else THEME["text_muted"],
+                    state="normal" if idx > 0 else "disabled",
+                    command=lambda s=slug: self._move_os_priority(s, -1)
                 )
-                badge.pack(side="right")
+                btn_tab_up.pack(side="left", padx=2)
 
-                # Add row in Dashboard
-                d_row = ctk.CTkFrame(self.dashboard_os_box, fg_color="transparent")
-                d_row.pack(fill="x", padx=12, pady=2)
-                ctk.CTkLabel(d_row, text=f"{icon} {item['name']}", font=ctk.CTkFont(family="Inter", size=11), text_color=THEME["text_secondary"]).pack(side="left")
-                ctk.CTkLabel(d_row, text=f"({item['size_str']})", font=ctk.CTkFont(family="Inter", size=10), text_color=THEME["text_muted"]).pack(side="right")
+                btn_tab_down = ctk.CTkButton(
+                    tab_btn_box,
+                    text="▼ Move Down",
+                    width=75,
+                    height=26,
+                    font=ctk.CTkFont(family="Inter", size=11),
+                    fg_color=THEME["card_bg"] if idx < total_count - 1 else THEME["surface"],
+                    hover_color=THEME["card_hover"],
+                    text_color=THEME["text_primary"] if idx < total_count - 1 else THEME["text_muted"],
+                    state="normal" if idx < total_count - 1 else "disabled",
+                    command=lambda s=slug: self._move_os_priority(s, 1)
+                )
+                btn_tab_down.pack(side="left", padx=2)
 
-                # Remove menu item
+                # Remove menu options
                 opt_str = f"{item['name']} ({item['slug']}) - {item['size_str']}"
                 remove_options.append(opt_str)
 
             self.remove_os_menu.configure(values=remove_options)
             self.selected_remove_os_var.set(remove_options[0])
             self.btn_remove_os.configure(state="normal")
+
+    def _move_os_priority(self, slug: str, direction: int):
+        ip = self.selected_ip_var.get() or "192.168.42.1"
+        port = int(self.http_port_var.get() or 8080)
+        success = self.os_manager.move_os_priority(slug, direction, ip, port)
+        if success:
+            self.refresh_installed_os_view()
+            new_list = [f"[{i+1}] {item['name']}" for i, item in enumerate(self.os_manager.get_installed_os_list())]
+            self.log(f"[✓] Boot menu priority updated: {', '.join(new_list)}")
+
+    def _set_os_default(self, slug: str):
+        ip = self.selected_ip_var.get() or "192.168.42.1"
+        port = int(self.http_port_var.get() or 8080)
+        success = self.os_manager.set_os_as_default(slug, ip, port)
+        if success:
+            self.refresh_installed_os_view()
+            new_list = [f"[{i+1}] {item['name']}" for i, item in enumerate(self.os_manager.get_installed_os_list())]
+            self.log(f"[✓] [{slug}] is now set as #1 Default Boot OS! Current order: {', '.join(new_list)}")
 
     def _periodic_health_check(self):
         # 1. Update Network Telemetry Chart
@@ -702,7 +926,8 @@ class NetworkInstallerApp(ctk.CTk):
         self.after(500, self._periodic_health_check)
 
     def _toggle_server(self):
-        if self.server_manager.is_active:
+        is_running = self.server_manager.is_active or self.server_manager.get_status()['is_serving']
+        if is_running:
             self.server_manager.stop(on_log=self.log)
             self.status_bar_lbl.configure(text="Server stopped.")
         else:
@@ -717,7 +942,17 @@ class NetworkInstallerApp(ctk.CTk):
             except ValueError:
                 port = 8080
 
-            self.status_bar_lbl.configure(text=f"Starting PXE server on {iface} ({ip})...")
+            dhcp_mode_slug = "standalone" if "Direct" in self.dhcp_mode_var.get() else "proxy"
+            
+            boot_mode_raw = self.boot_target_mode_var.get()
+            if "CSM" in boot_mode_raw:
+                boot_mode_slug = "csm"
+            elif "UEFI" in boot_mode_raw and "Dual" not in boot_mode_raw:
+                boot_mode_slug = "uefi"
+            else:
+                boot_mode_slug = "dual"
+
+            self.status_bar_lbl.configure(text=f"Starting PXE server on {iface} ({ip}) [{dhcp_mode_slug.upper()} | {boot_mode_slug.upper()}]...")
             # Generate updated multi-OS menu
             self.os_manager.generate_ipxe_menu(ip, port)
 
@@ -725,6 +960,8 @@ class NetworkInstallerApp(ctk.CTk):
                 interface=iface,
                 server_ip=ip,
                 http_port=port,
+                dhcp_mode=dhcp_mode_slug,
+                boot_mode=boot_mode_slug,
                 on_log=self.log
             )
             if success:
@@ -732,27 +969,38 @@ class NetworkInstallerApp(ctk.CTk):
             else:
                 messagebox.showerror("Server Error", "Failed to start network server. Check live logs tab.")
 
+    def _on_category_changed(self, category: str):
+        filtered = get_presets_by_category(category)
+        names = [p["name"] for p in filtered]
+        self.preset_menu.configure(values=names)
+        if self.selected_preset_var.get() not in names and names:
+            self.selected_preset_var.set(names[0])
+        self.log(f"[*] Filtered OS Profiles by category: {category} ({len(names)} profiles)")
+
     def _browse_iso(self):
         path = filedialog.askopenfilename(
-            title="Select Windows or Linux Installation ISO",
-            filetypes=[("ISO Disk Images", "*.iso"), ("All Files", "*.*")]
+            title="Select Operating System Installation Image",
+            filetypes=[
+                ("Supported Images", "*.iso *.dmg *.img"),
+                ("ISO Disk Images", "*.iso"),
+                ("Apple DMG Images", "*.dmg"),
+                ("All Files", "*.*")
+            ]
         )
         if path:
             self.iso_path_var.set(path)
-            self.log(f"[*] Selected ISO: {path}")
+            self.log(f"[*] Selected Image: {path}")
 
-            # Auto-detect preset from filename
-            fname = Path(path).name.lower()
-            if "win11" in fname or "windows 11" in fname or "windows11" in fname:
-                self.selected_preset_var.set("Windows 11 (64-bit)")
-            elif "win10" in fname or "windows 10" in fname or "windows10" in fname:
-                self.selected_preset_var.set("Windows 10 (64-bit)")
-            elif "server" in fname:
-                self.selected_preset_var.set("Windows Server (64-bit)")
-            elif "mint" in fname:
-                self.selected_preset_var.set("Linux Mint (Live & Installer)")
-            elif "ubuntu" in fname:
-                self.selected_preset_var.set("Ubuntu Desktop / Server")
+            # Auto-detect preset from image filename or signature
+            detected = detect_os_from_iso(path)
+            if detected:
+                cat_name = TYPE_CATEGORY_MAP.get(detected.get("type"), "All Systems")
+                self.selected_category_var.set(cat_name)
+                self._on_category_changed(cat_name)
+                self.selected_preset_var.set(detected["name"])
+                self.log(f"[✓] Auto-detected OS Profile: {detected['name']} [{cat_name}]")
+            else:
+                self.log("[*] Unrecognized image name - please select Category & Profile manually.")
 
     def _start_os_extraction(self):
         iso_path = self.iso_path_var.get().strip()
@@ -857,6 +1105,22 @@ class NetworkInstallerApp(ctk.CTk):
         else:
             messagebox.showerror("Installation Error", message)
 
+    def _launch_packet_sniffer(self):
+        try:
+            terminal = shutil.which('terminology') or shutil.which('x-terminal-emulator') or shutil.which('gnome-terminal') or 'xterm'
+            cmd = [terminal, '-e', f"sudo python3 {self.base_dir / 'scripts' / 'monitor-traffic.py'}"]
+            subprocess.Popen(cmd)
+            self.log("[+] Launched Real-Time Packet Sniffer terminal window.")
+        except Exception as e:
+            self.log(f"[!] Could not launch terminal sniffer: {e}")
+
+    def _open_boot_folder(self):
+        try:
+            subprocess.Popen(['xdg-open', str(self.base_dir / 'srv')])
+            self.log(f"[+] Opened directory: {self.base_dir / 'srv'}")
+        except Exception as e:
+            self.log(f"[!] Could not open directory: {e}")
+
     def _clear_logs(self):
         self.log_textbox.delete("1.0", "end")
         self.log("[*] Log buffer cleared.")
@@ -869,8 +1133,12 @@ class NetworkInstallerApp(ctk.CTk):
 
 
 def main():
-    app = NetworkInstallerApp()
-    app.mainloop()
+    try:
+        app = NetworkInstallerApp()
+        app.mainloop()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
