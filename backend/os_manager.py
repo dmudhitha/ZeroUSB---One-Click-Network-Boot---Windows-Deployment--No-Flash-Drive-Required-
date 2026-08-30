@@ -101,12 +101,18 @@ OS_PRESETS = [
         "type": "windows",
         "desc": "Performance-tuned low-latency Windows edition"
     },
-    # Diagnostic & Rescue Windows PE Environments
+    # Diagnostic & Rescue Suites
+    {
+        "slug": "hbcd_15_2",
+        "name": "Hiren's BootCD 15.2 (Classic Mini XP & DOS)",
+        "type": "rescue",
+        "desc": "Classic HBCD with Mini Windows XP & DOS tools (Compatible with 512MB-2GB RAM)"
+    },
     {
         "slug": "hbcd_pe",
-        "name": "Hiren's BootCD PE (Rescue Suite)",
+        "name": "Hiren's BootCD PE (Modern Win10 PE)",
         "type": "windows",
-        "desc": "Full WinPE diagnostic desktop with repair tools"
+        "desc": "Full WinPE diagnostic desktop with repair tools (Requires 4GB-8GB RAM & UEFI)"
     },
     {
         "slug": "strelec_pe",
@@ -246,6 +252,8 @@ def get_presets_by_category(category: str) -> List[Dict[str, Any]]:
     target_type = CATEGORY_TYPE_MAP.get(category)
     if not target_type:
         return OS_PRESETS
+    if target_type == "windows":
+        return [p for p in OS_PRESETS if p.get("type") in ["windows", "rescue"]]
     return [p for p in OS_PRESETS if p.get("type") == target_type]
 
 def detect_os_from_iso(iso_path: str) -> Optional[Dict[str, Any]]:
@@ -272,7 +280,10 @@ def detect_os_from_iso(iso_path: str) -> Optional[Dict[str, Any]]:
     if "atlas" in fname or "revi" in fname or "revios" in fname:
         return next((p for p in OS_PRESETS if p["slug"] == "atlas_revi"), None)
 
-    # Diagnostic & Rescue Windows PE
+    # Diagnostic & Rescue Suites (Differentiate Classic 15.2 vs Modern PE)
+    if ("15.2" in fname or "15-2" in fname or "15_2" in fname or "15." in fname) and ("hiren" in fname or "hbcd" in fname):
+        return next((p for p in OS_PRESETS if p["slug"] == "hbcd_15_2"), None)
+
     if "hiren" in fname or "hbcd" in fname:
         return next((p for p in OS_PRESETS if p["slug"] == "hbcd_pe"), None)
 
@@ -413,14 +424,23 @@ class OSManager:
             for child in self.srv_http_boot.iterdir():
                 if child.is_dir():
                     slug = child.name
-                    # Check if Windows or Linux
+                    # Check if Windows or Linux or Classic Rescue
                     has_wim = (child / "boot.wim").exists()
                     has_kernel = (child / "vmlinuz").exists() or (child / "vmlinuz.efi").exists()
+                    has_iso = (self.srv_http_images / f"{slug}.iso").exists()
+                    is_rescue = (child / "hbcd_classic.txt").exists() or (child / "rescue_marker.txt").exists() or (meta.get(slug, {}).get("type") == "rescue") or (slug == "hbcd_15_2")
 
-                    if has_wim or has_kernel:
+                    if has_wim or has_kernel or is_rescue or has_iso:
                         os_meta = meta.get(slug, {})
                         os_name = os_meta.get("name", slug.upper())
-                        os_type = os_meta.get("type", "windows" if has_wim else "linux")
+                        if is_rescue or os_meta.get("type") == "rescue":
+                            os_type = "rescue"
+                        elif has_wim:
+                            os_type = "windows"
+                        elif has_kernel:
+                            os_type = "linux"
+                        else:
+                            os_type = os_meta.get("type", "rescue")
                         
                         payload_dir = self.srv_samba / slug if (self.srv_samba / slug).exists() else child
                         size_mb = self._get_dir_size_mb(payload_dir)
@@ -622,28 +642,47 @@ class OSManager:
 
                 boot_wim = boot_dir / "boot.wim"
                 if not boot_wim.exists():
-                    raise FileNotFoundError("Could not find boot.wim in extracted ISO!")
+                    # Check if this is a classic DOS / ISOLINUX rescue ISO like HBCD 15.2
+                    is_classic_hbcd = (
+                        (samba_dir / "HBCD").exists() or 
+                        (samba_dir / "isolinux.cfg").exists() or 
+                        (samba_dir / "HBCD" / "isolinux.cfg").exists() or 
+                        (samba_dir / "HBCD" / "XP").exists() or
+                        "15.2" in os_slug or 
+                        "15.2" in iso_file.name
+                    )
+                    if is_classic_hbcd:
+                        on_log(f"[✓] Detected Classic Hiren's BootCD 15.2 structure (DOS / Mini XP).")
+                        on_log(f"[*] Switching profile from Windows WIM to Rescue Memdisk & SANboot mode...")
+                        os_type = "rescue"
+                        (boot_dir / "hbcd_classic.txt").write_text("Classic HBCD 15.2", encoding='utf-8')
+                        dst_iso = self.srv_http_images / f"{os_slug}.iso"
+                        if not dst_iso.exists():
+                            shutil.copy2(iso_file, dst_iso)
+                    else:
+                        raise FileNotFoundError("Could not find boot.wim in extracted ISO!")
 
                 # Patch startnet.cmd with specific Samba share name
-                on_progress(0.80, f"Injecting permanent Fast Network Installer into WinPE...")
-                wimlib = shutil.which('wimlib-imagex')
-                if wimlib and os_slug not in ["hbcd_pe", "strelec_pe"]:
-                    # 1. Load pristine standalone startnet template from disk (zero python escaping hazards)
-                    tpl_file = self.base_dir / "backend" / "templates" / "winpe_startnet.cmd"
-                    if tpl_file.exists():
-                        startnet_script = (
-                            tpl_file.read_text(encoding='utf-8')
-                            .replace("__OS_NAME__", os_name)
-                            .replace("__SERVER_IP__", server_ip)
-                            .replace("__OS_SLUG__", os_slug)
-                        )
-                    else:
-                        raise FileNotFoundError(f"Missing WinPE template: {tpl_file}")
-                    tmp_script = Path(f"/tmp/startnet_{os_slug}.cmd")
-                    tmp_script.write_text(startnet_script, encoding='utf-8')
+                if os_type == "windows":
+                    on_progress(0.80, f"Injecting permanent Fast Network Installer into WinPE...")
+                    wimlib = shutil.which('wimlib-imagex')
+                    if wimlib and os_slug not in ["hbcd_pe", "strelec_pe"]:
+                        # 1. Load pristine standalone startnet template from disk (zero python escaping hazards)
+                        tpl_file = self.base_dir / "backend" / "templates" / "winpe_startnet.cmd"
+                        if tpl_file.exists():
+                            startnet_script = (
+                                tpl_file.read_text(encoding='utf-8')
+                                .replace("__OS_NAME__", os_name)
+                                .replace("__SERVER_IP__", server_ip)
+                                .replace("__OS_SLUG__", os_slug)
+                            )
+                        else:
+                            raise FileNotFoundError(f"Missing WinPE template: {tpl_file}")
+                        tmp_script = Path(f"/tmp/startnet_{os_slug}.cmd")
+                        tmp_script.write_text(startnet_script, encoding='utf-8')
 
-                    # 2. Also write standalone install.cmd directly into Samba share
-                    install_cmd_script = f"""@echo off
+                        # 2. Also write standalone install.cmd directly into Samba share
+                        install_cmd_script = f"""@echo off
 title ZeroUSB Direct Fast Installer
 set INDEX=1
 if not "%1"=="" set INDEX=%1
@@ -669,94 +708,94 @@ echo [OK] Done! Rebooting in 5 seconds...
 ping -n 6 127.0.0.1 > nul
 wpeutil reboot
 """
-                    try:
-                        (samba_dir / "install.cmd").write_text(install_cmd_script, encoding='utf-8')
-                        (samba_dir / "sources" / "install.cmd").write_text(install_cmd_script, encoding='utf-8')
+                        try:
+                            (samba_dir / "install.cmd").write_text(install_cmd_script, encoding='utf-8')
+                            (samba_dir / "sources" / "install.cmd").write_text(install_cmd_script, encoding='utf-8')
 
-                        # Auto-inject ei.cfg to bypass product key prompt during Windows Setup
-                        sources_dir = samba_dir / "sources"
-                        if sources_dir.exists():
-                            (sources_dir / "ei.cfg").write_text("[EditionID]\n\n[Channel]\nRetail\n\n[VL]\n0\n", encoding='utf-8')
-                            (samba_dir / "ei.cfg").write_text("[EditionID]\n\n[Channel]\nRetail\n\n[VL]\n0\n", encoding='utf-8')
+                            # Auto-inject ei.cfg to bypass product key prompt during Windows Setup
+                            sources_dir = samba_dir / "sources"
+                            if sources_dir.exists():
+                                (sources_dir / "ei.cfg").write_text("[EditionID]\n\n[Channel]\nRetail\n\n[VL]\n0\n", encoding='utf-8')
+                                (samba_dir / "ei.cfg").write_text("[EditionID]\n\n[Channel]\nRetail\n\n[VL]\n0\n", encoding='utf-8')
 
-                        # Auto-generate editions.txt with 32-bit vs 64-bit architecture details
-                        wim_target = samba_dir / "sources" / "install.wim"
-                        if not wim_target.exists():
-                            wim_target = samba_dir / "install.wim"
-                        if not wim_target.exists():
-                            wim_target = samba_dir / "sources" / "install.esd"
-                        if wim_target.exists() and wimlib:
-                            wim_res = subprocess.run([wimlib, 'info', str(wim_target)], capture_output=True, text=True)
-                            ed_lines = [
-                                "=================================================================",
-                                "  Available Windows Editions and Architecture:",
-                                "=================================================================",
-                                ""
-                            ]
-                            cur_ed = {}
-                            for wl in wim_res.stdout.splitlines():
-                                wl = wl.strip()
-                                if wl.startswith("Index:"):
-                                    if cur_ed:
-                                        ed_lines.append(f"  [Index {cur_ed.get('idx','?')}]  {cur_ed.get('name','Windows'):<28} [{cur_ed.get('arch','Unknown')}]")
-                                    cur_ed = {'idx': wl.split(":", 1)[1].strip()}
-                                elif wl.startswith("Name:") and cur_ed and 'name' not in cur_ed:
-                                    cur_ed['name'] = wl.split(":", 1)[1].strip()
-                                elif wl.startswith("Architecture:") and cur_ed:
-                                    wa = wl.split(":", 1)[1].strip().lower()
-                                    cur_ed['arch'] = "64-bit (x64)" if "64" in wa else ("32-bit (x86)" if ("86" in wa or "32" in wa) else wa)
-                            if cur_ed:
-                                ed_lines.append(f"  [Index {cur_ed.get('idx','?')}]  {cur_ed.get('name','Windows'):<28} [{cur_ed.get('arch','Unknown')}]")
-                            ed_lines.append("")
-                            ed_lines.append("=================================================================")
-                            ed_content = "\r\n".join(ed_lines) + "\r\n"
-                            (samba_dir / "editions.txt").write_text(ed_content, encoding='utf-8')
-                            (samba_dir / "sources" / "editions.txt").write_text(ed_content, encoding='utf-8')
-                    except Exception:
-                        pass
+                            # Auto-generate editions.txt with 32-bit vs 64-bit architecture details
+                            wim_target = samba_dir / "sources" / "install.wim"
+                            if not wim_target.exists():
+                                wim_target = samba_dir / "install.wim"
+                            if not wim_target.exists():
+                                wim_target = samba_dir / "sources" / "install.esd"
+                            if wim_target.exists() and wimlib:
+                                wim_res = subprocess.run([wimlib, 'info', str(wim_target)], capture_output=True, text=True)
+                                ed_lines = [
+                                    "=================================================================",
+                                    "  Available Windows Editions and Architecture:",
+                                    "=================================================================",
+                                    ""
+                                ]
+                                cur_ed = {}
+                                for wl in wim_res.stdout.splitlines():
+                                    wl = wl.strip()
+                                    if wl.startswith("Index:"):
+                                        if cur_ed:
+                                            ed_lines.append(f"  [Index {cur_ed.get('idx','?')}]  {cur_ed.get('name','Windows'):<28} [{cur_ed.get('arch','Unknown')}]")
+                                        cur_ed = {'idx': wl.split(":", 1)[1].strip()}
+                                    elif wl.startswith("Name:") and cur_ed and 'name' not in cur_ed:
+                                        cur_ed['name'] = wl.split(":", 1)[1].strip()
+                                    elif wl.startswith("Architecture:") and cur_ed:
+                                        wa = wl.split(":", 1)[1].strip().lower()
+                                        cur_ed['arch'] = "64-bit (x64)" if "64" in wa else ("32-bit (x86)" if ("86" in wa or "32" in wa) else wa)
+                                if cur_ed:
+                                    ed_lines.append(f"  [Index {cur_ed.get('idx','?')}]  {cur_ed.get('name','Windows'):<28} [{cur_ed.get('arch','Unknown')}]")
+                                ed_lines.append("")
+                                ed_lines.append("=================================================================")
+                                ed_content = "\r\n".join(ed_lines) + "\r\n"
+                                (samba_dir / "editions.txt").write_text(ed_content, encoding='utf-8')
+                                (samba_dir / "sources" / "editions.txt").write_text(ed_content, encoding='utf-8')
+                        except Exception:
+                            pass
 
-                    # 3. Create update directives for boot.wim
-                    tmp_winpeshl = Path(f"/tmp/winpeshl_{os_slug}.ini")
-                    tmp_winpeshl.write_text('[LaunchApp]\nAppPath = %SystemRoot%\\system32\\cmd.exe /k %SystemRoot%\\system32\\startnet.cmd\n\n[LaunchApps]\n%SystemRoot%\\system32\\cmd.exe, /k %SystemRoot%\\system32\\startnet.cmd\n', encoding='utf-8')
+                        # 3. Create update directives for boot.wim
+                        tmp_winpeshl = Path(f"/tmp/winpeshl_{os_slug}.ini")
+                        tmp_winpeshl.write_text('[LaunchApp]\nAppPath = %SystemRoot%\\system32\\cmd.exe /k %SystemRoot%\\system32\\startnet.cmd\n\n[LaunchApps]\n%SystemRoot%\\system32\\cmd.exe, /k %SystemRoot%\\system32\\startnet.cmd\n', encoding='utf-8')
 
-                    tmp_cmd = Path(f"/tmp/wim_update_{os_slug}.txt")
-                    update_directives = [
-                        f"add {tmp_winpeshl} /Windows/System32/winpeshl.ini",
-                        f"add {tmp_script} /Windows/System32/startnet.cmd"
-                    ]
+                        tmp_cmd = Path(f"/tmp/wim_update_{os_slug}.txt")
+                        update_directives = [
+                            f"add {tmp_winpeshl} /Windows/System32/winpeshl.ini",
+                            f"add {tmp_script} /Windows/System32/startnet.cmd"
+                        ]
 
-                    # Add Atheros / Realtek network drivers if available in /tmp/ar8162_ansi
-                    if Path('/tmp/ar8162_ansi').exists():
-                        update_directives.append("add /tmp/ar8162_ansi /Drivers/Atheros_AR8162")
+                        # Add Atheros / Realtek network drivers if available in /tmp/ar8162_ansi
+                        if Path('/tmp/ar8162_ansi').exists():
+                            update_directives.append("add /tmp/ar8162_ansi /Drivers/Atheros_AR8162")
 
-                    tmp_cmd.write_text('\n'.join(update_directives) + '\n', encoding='utf-8')
+                        tmp_cmd.write_text('\n'.join(update_directives) + '\n', encoding='utf-8')
 
-                    try:
-                        info_res = subprocess.run([wimlib, 'info', str(boot_wim)], capture_output=True, text=True)
-                        match = re.search(r'Image Count:\s*(\d+)', info_res.stdout)
-                        img_count = int(match.group(1)) if match else 2
-                    except Exception:
-                        img_count = 2
+                        try:
+                            info_res = subprocess.run([wimlib, 'info', str(boot_wim)], capture_output=True, text=True)
+                            match = re.search(r'Image Count:\s*(\d+)', info_res.stdout)
+                            img_count = int(match.group(1)) if match else 2
+                        except Exception:
+                            img_count = 2
 
-                    for idx in range(1, img_count + 1):
-                        on_log(f"[*] Injecting ZeroUSB menu into boot.wim Image {idx}/{img_count}...")
-                        with open(tmp_cmd, 'r') as uf:
-                            res = subprocess.run([wimlib, 'update', str(boot_wim), str(idx)], stdin=uf, capture_output=True, text=True)
-                            if res.returncode != 0:
-                                on_log(f"[!] Warning updating image {idx}: {res.stderr}")
+                        for idx in range(1, img_count + 1):
+                            on_log(f"[*] Injecting ZeroUSB menu into boot.wim Image {idx}/{img_count}...")
+                            with open(tmp_cmd, 'r') as uf:
+                                res = subprocess.run([wimlib, 'update', str(boot_wim), str(idx)], stdin=uf, capture_output=True, text=True)
+                                if res.returncode != 0:
+                                    on_log(f"[!] Warning updating image {idx}: {res.stderr}")
 
-                    tmp_script.unlink(missing_ok=True)
-                    tmp_winpeshl.unlink(missing_ok=True)
-                    tmp_cmd.unlink(missing_ok=True)
+                        tmp_script.unlink(missing_ok=True)
+                        tmp_winpeshl.unlink(missing_ok=True)
+                        tmp_cmd.unlink(missing_ok=True)
 
-                    # 4. Mirror to primary default boot.wim and set full 777 permissions
-                    try:
-                        shutil.copy2(boot_wim, self.srv_http_boot / "boot.wim")
-                        subprocess.run(['chmod', '-R', '777', str(samba_dir), str(boot_dir)], capture_output=True)
-                    except Exception:
-                        pass
+                        # 4. Mirror to primary default boot.wim and set full 777 permissions
+                        try:
+                            shutil.copy2(boot_wim, self.srv_http_boot / "boot.wim")
+                            subprocess.run(['chmod', '-R', '777', str(samba_dir), str(boot_dir)], capture_output=True)
+                        except Exception:
+                            pass
 
-                    on_log(f"[✓] Permanent Fast DISM Network Installer & drivers injected for \\\\{server_ip}\\{os_slug}")
+                        on_log(f"[✓] Permanent Fast DISM Network Installer & drivers injected for \\\\{server_ip}\\{os_slug}")
 
             elif os_type == "linux":
                 on_progress(0.20, f"Preparing Linux files for Direct Network Mount...")
@@ -786,6 +825,28 @@ wpeutil reboot
                 on_progress(0.85, "Locating Linux kernel & initrd...")
                 self._copy_case_insensitive(samba_dir, "vmlinuz", boot_dir / "vmlinuz", on_log)
                 self._copy_case_insensitive(samba_dir, "initrd", boot_dir / "initrd.lz", on_log)
+
+            elif os_type in ["rescue", "iso_hybrid"]:
+                on_progress(0.20, f"Preparing Classic Rescue Environment from {iso_file.name}...")
+                self.srv_http_images.mkdir(parents=True, exist_ok=True)
+                dst_iso = self.srv_http_images / f"{os_slug}.iso"
+                if not dst_iso.exists():
+                    on_log(f"[+] Copying Rescue ISO to HTTP images: {dst_iso}...")
+                    shutil.copy2(iso_file, dst_iso)
+
+                # Extract to Samba share for access to tools
+                on_progress(0.40, f"Extracting payload to Samba share ({os_slug})...")
+                cmd = [seven_zip, 'x', '-y', f'-o{samba_dir}', str(iso_file)]
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                for line in proc.stdout:
+                    ls = line.strip()
+                    if ls and ('%' in ls or 'Extracting' in ls or 'Everything is Ok' in ls):
+                        on_log(f"  [7z] {ls}")
+                proc.wait()
+                subprocess.run(['chmod', '-R', '777', str(samba_dir)], capture_output=True)
+
+                (boot_dir / "hbcd_classic.txt").write_text(f"Rescue ISO: {os_name}", encoding='utf-8')
+                on_log(f"[✓] Configured {os_name} for high-speed Memdisk RAM & SAN boot!")
 
             elif os_type == "apple":
                 on_progress(0.20, f"Preparing Apple macOS / OpenCore boot assets from {iso_file.name}...")
@@ -945,6 +1006,19 @@ boot{iso_fallback}
 :{slug}
 echo Booting {name} via HTTP SAN (Direct ISO Streaming)...
 sanboot --no-describe {http_base}/images/{base_slug}.iso || goto failed
+""")
+            elif os_type in ["rescue", "iso_hybrid"]:
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Loading {name} into RAM via Memdisk (Safe for 512MB-2GB RAM)...
+kernel {http_base}/boot/memdisk iso raw
+initrd {http_base}/images/{slug}.iso
+boot || goto {slug}_sanboot
+
+:{slug}_sanboot
+echo Fallback: Booting {name} via HTTP SAN (Direct Streaming)...
+sanboot --no-describe {http_base}/images/{slug}.iso || goto failed
 """)
             elif os_type == "linux":
                 has_cifs = (self.srv_samba / slug).exists() and any(
