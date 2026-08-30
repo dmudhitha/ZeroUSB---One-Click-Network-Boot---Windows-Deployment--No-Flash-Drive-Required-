@@ -867,7 +867,7 @@ class NetworkInstallerApp(ctk.CTk):
 
             for idx, item in enumerate(installed):
                 slug = item["slug"]
-                icon = "🪟" if item["type"] == "windows" else ("🧰" if item["type"] in ["rescue", "rescue_memdisk", "rescue_grub", "iso_stream"] else "🐧")
+                icon = "🪟" if item["type"] == "windows" else ("🧰" if item["type"] in ["rescue", "rescue_xp", "rescue_dos", "rescue_memdisk", "rescue_grub", "iso_stream"] else "🐧")
                 is_default = (idx == 0)
 
                 # =========================================================

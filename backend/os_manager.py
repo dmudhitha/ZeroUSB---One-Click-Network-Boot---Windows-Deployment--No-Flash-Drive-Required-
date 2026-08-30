@@ -478,9 +478,18 @@ class OSManager:
                                 })
                         elif os_type in ["rescue", "iso_hybrid"] or slug == "hbcd_15_2":
                             installed.append({
-                                "slug": slug,
-                                "name": f"{os_name} (HTTP SAN Stream - Instant)",
-                                "type": "rescue",
+                                "slug": f"{slug}_xp",
+                                "name": f"{os_name} - Mini Windows XP (Auto-Boot)",
+                                "type": "rescue_xp",
+                                "path_boot": str(child),
+                                "path_payload": str(payload_dir),
+                                "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
+                                "is_legacy": False
+                            })
+                            installed.append({
+                                "slug": f"{slug}_dos",
+                                "name": f"{os_name} - DOS Programs (Auto-Boot)",
+                                "type": "rescue_dos",
                                 "path_boot": str(child),
                                 "path_payload": str(payload_dir),
                                 "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
@@ -488,7 +497,7 @@ class OSManager:
                             })
                             installed.append({
                                 "slug": f"{slug}_grub",
-                                "name": f"{os_name} (Native Grub4Dos - No Memdisk)",
+                                "name": f"{os_name} - Full Menu (15s Auto-Boot Timer)",
                                 "type": "rescue_grub",
                                 "path_boot": str(child),
                                 "path_payload": str(payload_dir),
@@ -1035,6 +1044,30 @@ boot{iso_fallback}
 echo Booting {name} via HTTP SAN (Direct ISO Streaming)...
 sanboot --no-describe {http_base}/images/{base_slug}.iso || goto failed
 """)
+            elif os_type == "rescue_xp":
+                base_slug = slug.removesuffix("_xp")
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Auto-booting Mini Windows XP (No Keyboard Required)...
+chain {http_base}/boot/{base_slug}/grldr keeppxe --config-file="configfile (pd)/menu-minixp.lst" || chain tftp://${{server_ip}}/grldr keeppxe --config-file="configfile (pd)/menu-minixp.lst" || goto failed
+""")
+            elif os_type == "rescue_dos":
+                base_slug = slug.removesuffix("_dos")
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Auto-booting DOS Diagnostic Programs (No Keyboard Required)...
+chain {http_base}/boot/{base_slug}/grldr keeppxe --config-file="configfile (pd)/menu-dos.lst" || chain tftp://${{server_ip}}/grldr keeppxe --config-file="configfile (pd)/menu-dos.lst" || goto failed
+""")
+            elif os_type == "rescue_grub":
+                base_slug = slug.removesuffix("_grub")
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Launching Hiren's BootCD 15.2 Full Menu (Default: Mini XP in 15s)...
+chain {http_base}/boot/{base_slug}/grldr keeppxe || chain tftp://${{server_ip}}/grldr keeppxe || goto failed
+""")
             elif os_type in ["rescue", "iso_hybrid"]:
                 menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
                 boot_targets.append(f"""
@@ -1051,14 +1084,6 @@ echo Loading {name} into RAM via Memdisk (Drive Shield Mode)...
 kernel {http_base}/boot/memdisk iso raw nopass
 initrd {http_base}/images/{slug}.iso
 boot || goto failed
-""")
-            elif os_type == "rescue_grub":
-                base_slug = slug.removesuffix("_grub")
-                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
-                boot_targets.append(f"""
-:{slug}
-echo Launching {name} via Native Grub4Dos...
-chain {http_base}/boot/{base_slug}/grldr keeppxe || chain tftp://${{server_ip}}/grldr keeppxe || goto failed
 """)
             elif os_type == "rescue_memdisk":
                 base_slug = slug.removesuffix("_mem")
