@@ -1,0 +1,9 @@
+default 0
+timeout 1
+
+title Dos Programs (PXE Network Boot)
+map --mem (pd)/HBCD/Dos/dos.gz (fd0)
+map --hook
+root (fd0)
+chainloader (fd0)+1
+boot

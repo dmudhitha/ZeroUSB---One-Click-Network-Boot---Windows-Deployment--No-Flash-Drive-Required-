@@ -1,0 +1,6 @@
+default 0
+timeout 1
+
+title Mini Windows XP (PXE Network Boot)
+pxe keep
+chainloader --raw (pd)/HBCD/XP/XP.BIN
