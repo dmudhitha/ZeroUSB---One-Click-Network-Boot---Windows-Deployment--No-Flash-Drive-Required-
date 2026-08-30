@@ -50,6 +50,12 @@ class NetworkInstallerApp(ctk.CTk):
         self.minsize(960, 740)
         self.configure(fg_color=THEME["bg_dark"])
 
+        # Maximize Window on Startup
+        try:
+            self.after(50, self._maximize_window)
+        except Exception:
+            pass
+
         # Window Icon
         icon_path = self.base_dir / "assets" / "icon.png"
         if icon_path.exists():
@@ -65,8 +71,10 @@ class NetworkInstallerApp(ctk.CTk):
         self.selected_interface_var = ctk.StringVar()
         self.selected_ip_var = ctk.StringVar(value="192.168.1.41")
         self.http_port_var = ctk.StringVar(value="8080")
-        self.dhcp_mode_var = ctk.StringVar(value="ProxyDHCP (Connected to Router)")
+        self.dhcp_mode_var = ctk.StringVar(value="Standalone DHCP (Direct PC Cable)")
         self.boot_target_mode_var = ctk.StringVar(value="⚡ Dual Mode (Auto-Detect CSM & UEFI)")
+        self.default_os_var = ctk.StringVar(value="Loading...")
+        self.boot_timeout_var = ctk.StringVar(value="⏱️ 10 Seconds (Default)")
         self.iso_path_var = ctk.StringVar()
         self.selected_category_var = ctk.StringVar(value="All Systems")
         self.selected_preset_var = ctk.StringVar(value="Windows 10 (64-bit)")
@@ -151,14 +159,39 @@ class NetworkInstallerApp(ctk.CTk):
         self._build_deps_tab()
         self._build_logs_tab()
 
+    def _maximize_window(self):
+        try:
+            # Native Linux X11 window maximization
+            self.attributes('-zoomed', True)
+        except Exception:
+            try:
+                # Windows / platform fallback
+                self.state('zoomed')
+            except Exception:
+                try:
+                    w = self.winfo_screenwidth()
+                    h = self.winfo_screenheight()
+                    self.geometry(f"{w}x{h}+0+0")
+                except Exception:
+                    pass
+
     # --------------------------------------------------------------------------
     # Tab 1: Control Center & Real-Time Telemetry Dashboard
     # --------------------------------------------------------------------------
     def _build_dashboard_tab(self):
         tab = self.tab_dashboard
 
+        # Full-height scrollable container for Dashboard tab
+        self.dashboard_scroll = ctk.CTkScrollableFrame(
+            tab,
+            fg_color="transparent",
+            scrollbar_button_color=THEME["card_border"],
+            scrollbar_button_hover_color=THEME["primary"]
+        )
+        self.dashboard_scroll.pack(fill="both", expand=True, padx=2, pady=2)
+
         # Top Section: Two Column Control & Info Cards
-        top_container = ctk.CTkFrame(tab, fg_color="transparent")
+        top_container = ctk.CTkFrame(self.dashboard_scroll, fg_color="transparent")
         top_container.pack(fill="x", padx=4, pady=(2, 6))
         top_container.grid_columnconfigure(0, weight=5)
         top_container.grid_columnconfigure(1, weight=5)
@@ -225,7 +258,7 @@ class NetworkInstallerApp(ctk.CTk):
 
         # Boot Target Mode Selector Row (CSM vs UEFI)
         boot_mode_row = ctk.CTkFrame(left_card, fg_color="transparent")
-        boot_mode_row.pack(fill="x", padx=16, pady=(0, 8))
+        boot_mode_row.pack(fill="x", padx=16, pady=(0, 6))
 
         ctk.CTkLabel(boot_mode_row, text="Target:", font=ctk.CTkFont(family="Inter", size=11), text_color=THEME["text_secondary"]).pack(side="left", padx=(0, 6))
 
@@ -237,6 +270,7 @@ class NetworkInstallerApp(ctk.CTk):
                 "🛡️ Pure CSM / Legacy BIOS Mode",
                 "🚀 Pure Native UEFI 64-bit Mode"
             ],
+            command=self._on_boot_mode_changed,
             fg_color=THEME["surface"],
             button_color=THEME["card_border"],
             button_hover_color=THEME["card_hover"],
@@ -244,6 +278,62 @@ class NetworkInstallerApp(ctk.CTk):
             height=30
         )
         self.boot_mode_menu.pack(side="left", fill="x", expand=True)
+
+        # Default Boot OS Selector Row
+        default_os_row = ctk.CTkFrame(left_card, fg_color="transparent")
+        default_os_row.pack(fill="x", padx=16, pady=(0, 4))
+
+        ctk.CTkLabel(
+            default_os_row,
+            text="Default OS:",
+            font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
+            text_color=THEME["text_primary"]
+        ).pack(side="left", padx=(0, 6))
+
+        self.default_os_menu = ctk.CTkOptionMenu(
+            default_os_row,
+            variable=self.default_os_var,
+            values=["No OS installed"],
+            command=self._on_default_os_menu_selected,
+            fg_color=THEME["surface"],
+            button_color=THEME["card_border"],
+            button_hover_color=THEME["card_hover"],
+            dynamic_resizing=False,
+            height=30
+        )
+        self.default_os_menu.pack(side="left", fill="x", expand=True)
+
+        # Auto-Boot Countdown Timer Row
+        timeout_row = ctk.CTkFrame(left_card, fg_color="transparent")
+        timeout_row.pack(fill="x", padx=16, pady=(0, 8))
+
+        ctk.CTkLabel(
+            timeout_row,
+            text="Auto-Boot:",
+            font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
+            text_color=THEME["text_primary"]
+        ).pack(side="left", padx=(0, 6))
+
+        self.timeout_menu = ctk.CTkOptionMenu(
+            timeout_row,
+            variable=self.boot_timeout_var,
+            values=[
+                "⚡ Instant Boot (0s - No Keyboard Needed)",
+                "⏱️ 3 Seconds",
+                "⏱️ 5 Seconds",
+                "⏱️ 10 Seconds (Default)",
+                "⏱️ 15 Seconds",
+                "⏱️ 30 Seconds",
+                "🛑 Wait Forever (No Timer)"
+            ],
+            command=self._on_timeout_menu_selected,
+            fg_color=THEME["surface"],
+            button_color=THEME["card_border"],
+            button_hover_color=THEME["card_hover"],
+            dynamic_resizing=False,
+            height=30
+        )
+        self.timeout_menu.pack(side="left", fill="x", expand=True)
 
         # Live Service Health Sub-Card
         services_box = ctk.CTkFrame(left_card, fg_color=THEME["surface"], corner_radius=8, border_width=1, border_color=THEME["card_border"])
@@ -321,8 +411,8 @@ class NetworkInstallerApp(ctk.CTk):
         self.dashboard_os_box.pack(fill="both", expand=True, padx=16, pady=(0, 12))
 
         # Bottom Section: Real-Time Network Data Flow Graph Widget
-        self.network_chart = NetworkTrafficChart(tab)
-        self.network_chart.pack(fill="both", expand=True, padx=10, pady=(2, 6))
+        self.network_chart = NetworkTrafficChart(self.dashboard_scroll)
+        self.network_chart.pack(fill="x", expand=False, padx=8, pady=(4, 16))
 
     def _create_service_indicator(self, parent, name: str):
         row = ctk.CTkFrame(parent, fg_color="transparent")
@@ -654,6 +744,50 @@ class NetworkInstallerApp(ctk.CTk):
             self.network_monitor.set_interface(iface)
             self.log(f"[*] Selected interface: {iface} (IP: {ip})")
 
+    def _on_boot_mode_changed(self, choice: str):
+        if "UEFI" in choice and "Dual" not in choice:
+            self.log("[*] Target Boot Mode set to Pure Native UEFI (64-bit).")
+        elif "Legacy" in choice or "CSM" in choice:
+            self.log("[*] Target Boot Mode set to Pure CSM / Legacy BIOS (32-bit).")
+        else:
+            self.log("[*] Target Boot Mode set to Dual Mode (Auto-Detect CSM & UEFI).")
+
+    def _on_default_os_menu_selected(self, choice: str):
+        installed = self.os_manager.get_installed_os_list()
+        for idx, item in enumerate(installed):
+            opt_str = f"[{idx+1}] {item['name']}"
+            if opt_str == choice or item['name'] in choice:
+                self._set_os_default(item['slug'])
+                break
+
+    def _on_timeout_menu_selected(self, choice: str):
+        if "Instant" in choice or "0s" in choice:
+            sec = 0
+        elif "3" in choice:
+            sec = 3
+        elif "5" in choice:
+            sec = 5
+        elif "10" in choice:
+            sec = 10
+        elif "15" in choice:
+            sec = 15
+        elif "30" in choice:
+            sec = 30
+        elif "Wait" in choice or "Forever" in choice:
+            sec = -1
+        else:
+            sec = 10
+
+        choice_iface = self.selected_interface_var.get()
+        ip = choice_iface.split(" - ")[1] if " - " in choice_iface else "192.168.42.1"
+        try:
+            port = int(self.http_port_var.get())
+        except ValueError:
+            port = 8080
+
+        self.os_manager.set_boot_timeout(sec, ip, port)
+        self.log(f"[*] Boot menu auto-boot timeout set to: {sec}s ({choice})")
+
     def refresh_dependencies_view(self):
         deps = check_dependencies(self.base_dir)
 
@@ -708,7 +842,26 @@ class NetworkInstallerApp(ctk.CTk):
             self.remove_os_menu.configure(values=["No OS installed"])
             self.selected_remove_os_var.set("No OS installed")
             self.btn_remove_os.configure(state="disabled")
+            self.default_os_menu.configure(values=["No OS installed"])
+            self.default_os_var.set("No OS installed")
         else:
+            default_options = [f"[{i+1}] {item['name']}" for i, item in enumerate(installed)]
+            self.default_os_menu.configure(values=default_options)
+            self.default_os_var.set(default_options[0])
+
+            # Sync timeout menu with current setting
+            t_sec = self.os_manager.get_boot_timeout()
+            timeout_map = {
+                0: "⚡ Instant Boot (0s - No Keyboard Needed)",
+                3: "⏱️ 3 Seconds",
+                5: "⏱️ 5 Seconds",
+                10: "⏱️ 10 Seconds (Default)",
+                15: "⏱️ 15 Seconds",
+                30: "⏱️ 30 Seconds",
+                -1: "🛑 Wait Forever (No Timer)"
+            }
+            self.boot_timeout_var.set(timeout_map.get(t_sec, f"⏱️ {t_sec} Seconds"))
+
             remove_options = []
             total_count = len(installed)
 
@@ -745,9 +898,23 @@ class NetworkInstallerApp(ctk.CTk):
                     anchor="w"
                 ).pack(side="left", fill="x", expand=True, pady=4)
 
-                # Reorder Arrow Buttons on Dashboard
+                # Reorder & Set Default Buttons on Dashboard
                 btn_frame = ctk.CTkFrame(d_row, fg_color="transparent")
                 btn_frame.pack(side="right", padx=(4, 6), pady=2)
+
+                if not is_default:
+                    btn_make_def = ctk.CTkButton(
+                        btn_frame,
+                        text="⭐ Set Default",
+                        width=85,
+                        height=22,
+                        font=ctk.CTkFont(size=9, weight="bold"),
+                        fg_color=THEME["primary"],
+                        hover_color=THEME["primary_hover"],
+                        text_color="#ffffff",
+                        command=lambda s=slug: self._set_os_default(s)
+                    )
+                    btn_make_def.pack(side="left", padx=(0, 4))
 
                 btn_up = ctk.CTkButton(
                     btn_frame,
@@ -945,7 +1112,7 @@ class NetworkInstallerApp(ctk.CTk):
             dhcp_mode_slug = "standalone" if "Direct" in self.dhcp_mode_var.get() else "proxy"
             
             boot_mode_raw = self.boot_target_mode_var.get()
-            if "CSM" in boot_mode_raw:
+            if "CSM" in boot_mode_raw or "Legacy" in boot_mode_raw:
                 boot_mode_slug = "csm"
             elif "UEFI" in boot_mode_raw and "Dual" not in boot_mode_raw:
                 boot_mode_slug = "uefi"

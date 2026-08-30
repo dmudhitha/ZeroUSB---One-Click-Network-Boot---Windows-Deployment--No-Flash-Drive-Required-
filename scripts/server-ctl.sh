@@ -39,8 +39,9 @@ case "${ACTION}" in
             if ! grep -q "server min protocol = NT1" /etc/samba/smb.conf; then
                 sed -i '/\[global\]/a \   server min protocol = NT1\n   ntlm auth = yes\n   lanman auth = yes\n   map to guest = Bad User' /etc/samba/smb.conf 2>/dev/null || true
             fi
-            # Ensure force user = mudhitha for shares
-            sed -i 's/force user = nobody/force user = mudhitha/g' /etc/samba/smb.conf 2>/dev/null || true
+            # Ensure force user for Samba shares matches active user
+            ACTIVE_USER="${SUDO_USER:-${USER:-nobody}}"
+            sed -i "s/force user = nobody/force user = ${ACTIVE_USER}/g" /etc/samba/smb.conf 2>/dev/null || true
         fi
 
         # 4. Allow firewall ports & TFTP conntrack

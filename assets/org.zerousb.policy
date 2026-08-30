@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>ZeroUSB Project</vendor>
+  <vendor_url>https://github.com/dmudhitha/ZeroUSB</vendor_url>
+  <icon_name>zerousb</icon_name>
+
+  <action id="org.zerousb.serverctl">
+    <description>Manage ZeroUSB Network Deployment Services</description>
+    <message>Authentication is required to start or configure ZeroUSB network boot services (DHCP/TFTP/Samba)</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/zerousb/scripts/server-ctl.sh</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

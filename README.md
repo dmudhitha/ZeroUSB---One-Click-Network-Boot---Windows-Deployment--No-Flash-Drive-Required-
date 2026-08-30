@@ -143,9 +143,26 @@ bash /home/mudhitha/System/Network-Installer/run-gui.sh
 
 ## ⚡ Quick Start Guide
 
-### 1. Install System Dependencies & Bootloaders
-Open the GUI and navigate to **📦 Dependencies & Tools**, then click **"📥 Install & Download All Dependencies"**.  
-*CLI Alternative:*
+### Option A: Install via Debian / Ubuntu Package (.deb) (Recommended)
+ZeroUSB can be installed system-wide directly to `/opt/zerousb`:
+
+```bash
+# 1. Install the debian package
+sudo dpkg -i dist/zerousb_1.2.0_amd64.deb
+
+# 2. Resolve any missing system dependencies
+sudo apt-get install -f
+```
+
+* **Desktop Launcher:** ZeroUSB will appear in your system's Application Menu under **System / Utilities**.
+* **Terminal Launcher:** Type `zerousb` from any terminal directory.
+* **Build from Source:** Run `bash scripts/build-deb.sh` to generate a fresh package in `dist/`.
+
+---
+
+### Option B: Standalone Portable / Development Setup
+If running directly from the cloned repository:
+
 ```bash
 bash scripts/install-prereqs.sh
 ```

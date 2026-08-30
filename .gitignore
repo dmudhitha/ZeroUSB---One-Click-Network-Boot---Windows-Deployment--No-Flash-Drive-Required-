@@ -72,8 +72,11 @@ srv/http/boot/linux*
 srv/http/boot/mint*
 srv/http/boot/debian*
 srv/http/boot/custom*
+srv/http/boot/hbcd*
 srv/http/boot/boot.wim
 srv/http/boot/install.wim
+srv/tftp/boot/*
+!srv/tftp/boot/.gitkeep
 
 # User Runtime Dynamic Database / Profiles
 config/installed_os.json

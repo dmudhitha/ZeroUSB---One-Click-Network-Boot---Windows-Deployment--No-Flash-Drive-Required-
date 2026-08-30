@@ -31,7 +31,7 @@ item --gap --             ------------------ Local Actions ---------------------
 item --key h boot_local           [H] Boot from Local Storage (SSD / NVMe / HDD)
 item --key d ipxe_shell           [D] iPXE Diagnostic Shell
 item --key r reboot               [R] Reboot Computer
-choose --timeout 30000 --default boot_local target && goto ${target}
+choose --timeout 10000 --default boot_local target && goto ${target}
 
 
 
@@ -52,7 +52,7 @@ goto menu
 reboot
 
 :failed
-echo.
+echo
 echo [ERROR] Network booting failed for selected OS.
-prompt Press any key to return to ZeroUSB menu...
+prompt --timeout 5000 Press any key (or waiting 5s) to return to ZeroUSB menu...
 goto menu

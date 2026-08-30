@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ZeroUSB
+GenericName=Multi-OS Network Deployment Platform
+Comment=One-Click Network Boot and OS Deployment Server (No Flash Drive Required)
+Exec=/usr/bin/zerousb
+Icon=zerousb
+Terminal=false
+StartupNotify=true
+Categories=System;Network;Utility;Archiving;
+Keywords=pxe;network;boot;installer;windows;linux;tftp;dhcp;zerousb;

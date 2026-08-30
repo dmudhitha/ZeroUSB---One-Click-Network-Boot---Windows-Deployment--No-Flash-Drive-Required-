@@ -425,15 +425,47 @@ class OSManager:
                         payload_dir = self.srv_samba / slug if (self.srv_samba / slug).exists() else child
                         size_mb = self._get_dir_size_mb(payload_dir)
 
-                        installed.append({
-                            "slug": slug,
-                            "name": os_name,
-                            "type": os_type,
-                            "path_boot": str(child),
-                            "path_payload": str(payload_dir),
-                            "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
-                            "is_legacy": False
-                        })
+                        iso_file = self.srv_http_images / f"{slug}.iso"
+                        has_sanbootable_iso = False
+                        iso_size_mb = 0
+                        if iso_file.exists():
+                            try:
+                                iso_size_mb = iso_file.stat().st_size / (1024 * 1024)
+                                if iso_size_mb <= 2000:
+                                    has_sanbootable_iso = True
+                            except Exception:
+                                pass
+
+                        if slug in ["hbcd_pe", "strelec_pe"]:
+                            installed.append({
+                                "slug": slug,
+                                "name": f"{os_name} (Requires 6GB+ RAM)",
+                                "type": "windows",
+                                "path_boot": str(child),
+                                "path_payload": str(payload_dir),
+                                "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
+                                "is_legacy": False
+                            })
+                            if has_sanbootable_iso:
+                                installed.append({
+                                    "slug": f"{slug}_iso",
+                                    "name": f"{os_name} (HTTP ISO Stream - Sub 2GB)",
+                                    "type": "iso_stream",
+                                    "path_boot": str(iso_file),
+                                    "path_payload": str(iso_file),
+                                    "size_str": f"{iso_size_mb / 1024:.2f} GB" if iso_size_mb > 1024 else f"{iso_size_mb:.0f} MB",
+                                    "is_legacy": False
+                                })
+                        else:
+                            installed.append({
+                                "slug": slug,
+                                "name": os_name,
+                                "type": os_type,
+                                "path_boot": str(child),
+                                "path_payload": str(payload_dir),
+                                "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
+                                "is_legacy": False
+                            })
 
         # Sort according to user-defined priority order stored in meta["_order"]
         order = meta.get("_order", [])
@@ -490,6 +522,17 @@ class OSManager:
         self.generate_ipxe_menu(server_ip, http_port)
         return True
 
+    def get_boot_timeout(self) -> int:
+        meta = self._load_meta()
+        return int(meta.get("boot_timeout", 10))
+
+    def set_boot_timeout(self, seconds: int, server_ip: str = "192.168.42.1", http_port: int = 8080) -> bool:
+        meta = self._load_meta()
+        meta["boot_timeout"] = seconds
+        self._save_meta(meta)
+        self.generate_ipxe_menu(server_ip, http_port)
+        return True
+
     def extract_os(
         self,
         os_slug: str,
@@ -542,6 +585,16 @@ class OSManager:
 
             if os_type == "windows":
                 samba_dir.mkdir(parents=True, exist_ok=True)
+
+                # Ensure ISO is accessible for HTTP SANBOOT streaming fallback
+                self.srv_http_images.mkdir(parents=True, exist_ok=True)
+                dst_iso = self.srv_http_images / f"{os_slug}.iso"
+                if not dst_iso.exists():
+                    try:
+                        dst_iso.symlink_to(iso_file)
+                    except Exception:
+                        pass
+
                 on_progress(0.15, f"Extracting Windows files to Samba share ({os_slug})...")
                 on_log(f"[+] Extracting ISO to {samba_dir}...")
 
@@ -840,6 +893,29 @@ wpeutil reboot
 
             if os_type == "windows":
                 menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                iso_file = self.srv_http_images / f"{slug}.iso"
+                has_sanbootable_iso = False
+                if iso_file.exists():
+                    try:
+                        if iso_file.stat().st_size <= 2000 * 1024 * 1024:
+                            has_sanbootable_iso = True
+                    except Exception:
+                        pass
+
+                iso_fallback = ""
+                if has_sanbootable_iso:
+                    iso_fallback = f""" || goto {slug}_iso_fallback
+
+:{slug}_iso_fallback
+echo
+echo [!] Wimboot RAMDisk allocation failed (Status: 0xc0000017 / Out of RAM).
+echo [*] Fallback: Streaming {name} via HTTP SAN (Direct ISO Loopback)...
+sanboot --no-describe {http_base}/images/{slug}.iso || goto failed
+"""
+                else:
+                    iso_fallback = " || goto failed\n"
+
+                boot_dir_name = slug
                 if item.get("is_legacy", False):
                     boot_targets.append(f"""
 :{slug}
@@ -849,18 +925,26 @@ initrd {http_base}/boot/${{bootmgr_file}}  ${{bootmgr_name}}
 initrd {http_base}/boot/BCD                bcd
 initrd {http_base}/boot/boot.sdi           boot.sdi
 initrd {http_base}/boot/boot.wim           boot.wim
-boot || goto failed
+boot{iso_fallback}
 """)
                 else:
                     boot_targets.append(f"""
 :{slug}
 echo Booting {name} over HTTP...
 kernel {http_base}/boot/${{wimboot_file}}
-initrd {http_base}/boot/{slug}/${{bootmgr_file}}  ${{bootmgr_name}}
-initrd {http_base}/boot/{slug}/BCD                bcd
-initrd {http_base}/boot/{slug}/boot.sdi           boot.sdi
-initrd {http_base}/boot/{slug}/boot.wim           boot.wim
-boot || goto failed
+initrd {http_base}/boot/{boot_dir_name}/${{bootmgr_file}}  ${{bootmgr_name}}
+initrd {http_base}/boot/{boot_dir_name}/BCD                bcd
+initrd {http_base}/boot/{boot_dir_name}/boot.sdi           boot.sdi
+initrd {http_base}/boot/{boot_dir_name}/boot.wim           boot.wim
+boot{iso_fallback}
+""")
+            elif os_type == "iso_stream":
+                base_slug = slug.removesuffix("_iso")
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Booting {name} via HTTP SAN (Direct ISO Streaming)...
+sanboot --no-describe {http_base}/images/{base_slug}.iso || goto failed
 """)
             elif os_type == "linux":
                 has_cifs = (self.srv_samba / slug).exists() and any(
@@ -920,6 +1004,15 @@ chain {http_base}/boot/{slug}/bootx64.efi || chain {http_base}/boot/{slug}/boot.
         else:
             default_target = "boot_local"
 
+        meta = self._load_meta()
+        timeout_sec = int(meta.get("boot_timeout", 10))
+        if timeout_sec == 0:
+            choose_line = f"choose --timeout 1 --default {default_target} target && goto ${{target}}"
+        elif timeout_sec < 0:
+            choose_line = f"choose --default {default_target} target && goto ${{target}}"
+        else:
+            choose_line = f"choose --timeout {timeout_sec * 1000} --default {default_target} target && goto ${{target}}"
+
         menu_items_str = "\n".join(menu_items)
         boot_targets_str = "\n".join(boot_targets)
 
@@ -953,7 +1046,7 @@ item --gap --             ------------------ Local Actions ---------------------
 item --key h boot_local           [H] Boot from Local Storage (SSD / NVMe / HDD)
 item --key d ipxe_shell           [D] iPXE Diagnostic Shell
 item --key r reboot               [R] Reboot Computer
-choose --timeout 30000 --default {default_target} target && goto ${{target}}
+{choose_line}
 
 {boot_targets_str}
 
@@ -974,9 +1067,9 @@ goto menu
 reboot
 
 :failed
-echo.
+echo
 echo [ERROR] Network booting failed for selected OS.
-prompt Press any key to return to ZeroUSB menu...
+prompt --timeout 5000 Press any key (or waiting 5s) to return to ZeroUSB menu...
 goto menu
 """
         self.srv_http.mkdir(parents=True, exist_ok=True)

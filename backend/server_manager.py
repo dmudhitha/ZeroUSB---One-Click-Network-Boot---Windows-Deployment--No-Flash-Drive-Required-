@@ -247,7 +247,8 @@ class ServerManager:
             bios_bootloader = "undionly.kpxe"
             uefi_bootloader = "undionly.kpxe"
         elif boot_mode == "uefi":
-            bios_bootloader = "ipxe.efi"
+            # Native UEFI mode: Always serve ipxe.efi to UEFI clients. Keep undionly.kpxe for legacy BIOS clients so they never crash with 'NBP too big'
+            bios_bootloader = "undionly.kpxe"
             uefi_bootloader = "ipxe.efi"
         else:
             # Dual Mode (Auto-Detect CSM & UEFI)
