@@ -476,6 +476,25 @@ class OSManager:
                                     "size_str": f"{iso_size_mb / 1024:.2f} GB" if iso_size_mb > 1024 else f"{iso_size_mb:.0f} MB",
                                     "is_legacy": False
                                 })
+                        elif os_type in ["rescue", "iso_hybrid"] or slug == "hbcd_15_2":
+                            installed.append({
+                                "slug": slug,
+                                "name": f"{os_name} (HTTP SAN Stream - Instant)",
+                                "type": "rescue",
+                                "path_boot": str(child),
+                                "path_payload": str(payload_dir),
+                                "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
+                                "is_legacy": False
+                            })
+                            installed.append({
+                                "slug": f"{slug}_mem",
+                                "name": f"{os_name} (Memdisk RAM - Safe ISO)",
+                                "type": "rescue_memdisk",
+                                "path_boot": str(child),
+                                "path_payload": str(payload_dir),
+                                "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
+                                "is_legacy": False
+                            })
                         else:
                             installed.append({
                                 "slug": slug,
@@ -1011,14 +1030,24 @@ sanboot --no-describe {http_base}/images/{base_slug}.iso || goto failed
                 menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
                 boot_targets.append(f"""
 :{slug}
-echo Loading {name} into RAM via Memdisk (Safe for 512MB-2GB RAM)...
-kernel {http_base}/boot/memdisk iso raw
-initrd {http_base}/images/{slug}.iso
-boot || goto {slug}_sanboot
+echo Booting {name} via HTTP SAN (Instant Direct Loopback)...
+sanboot --no-describe {http_base}/images/{slug}.iso || goto {slug}_fallback
 
-:{slug}_sanboot
-echo Fallback: Booting {name} via HTTP SAN (Direct Streaming)...
-sanboot --no-describe {http_base}/images/{slug}.iso || goto failed
+:{slug}_fallback
+echo Fallback: Loading {name} into RAM via Memdisk (Safe ISO mode)...
+kernel {http_base}/boot/memdisk iso
+initrd {http_base}/images/{slug}.iso
+boot || goto failed
+""")
+            elif os_type == "rescue_memdisk":
+                base_slug = slug.removesuffix("_mem")
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Loading {name} into RAM via Memdisk (Safe ISO mode)...
+kernel {http_base}/boot/memdisk iso
+initrd {http_base}/images/{base_slug}.iso
+boot || goto failed
 """)
             elif os_type == "linux":
                 has_cifs = (self.srv_samba / slug).exists() and any(

@@ -25,7 +25,8 @@ goto menu
 menu ZeroUSB - Universal Deployment Server [Active Mode: ${mode_label}]
 item --gap --             [ TIP: Press 1, 2, 3, 4, H, or R directly to select ]
 item --gap --             ------------------ Operating Systems -------------------
-item --key 1 hbcd_15_2          [1] Hiren's BootCD 15.2 (Classic Mini XP & DOS)
+item --key 1 hbcd_15_2          [1] Hiren's BootCD 15.2 (Classic Mini XP & DOS) (HTTP SAN Stream - Instant)
+item --key 2 hbcd_15_2_mem      [2] Hiren's BootCD 15.2 (Classic Mini XP & DOS) (Memdisk RAM - Safe ISO)
 item --gap --             ------------------ Local Actions -----------------------
 item --key h boot_local           [H] Boot from Local Storage (SSD / NVMe / HDD)
 item --key d ipxe_shell           [D] iPXE Diagnostic Shell
@@ -34,14 +35,21 @@ choose --timeout 10000 --default hbcd_15_2 target && goto ${target}
 
 
 :hbcd_15_2
-echo Loading Hiren's BootCD 15.2 (Classic Mini XP & DOS) into RAM via Memdisk (Safe for 512MB-2GB RAM)...
-kernel http://${server_ip}:8080/boot/memdisk iso raw
-initrd http://${server_ip}:8080/images/hbcd_15_2.iso
-boot || goto hbcd_15_2_sanboot
+echo Booting Hiren's BootCD 15.2 (Classic Mini XP & DOS) (HTTP SAN Stream - Instant) via HTTP SAN (Instant Direct Loopback)...
+sanboot --no-describe http://${server_ip}:8080/images/hbcd_15_2.iso || goto hbcd_15_2_fallback
 
-:hbcd_15_2_sanboot
-echo Fallback: Booting Hiren's BootCD 15.2 (Classic Mini XP & DOS) via HTTP SAN (Direct Streaming)...
-sanboot --no-describe http://${server_ip}:8080/images/hbcd_15_2.iso || goto failed
+:hbcd_15_2_fallback
+echo Fallback: Loading Hiren's BootCD 15.2 (Classic Mini XP & DOS) (HTTP SAN Stream - Instant) into RAM via Memdisk (Safe ISO mode)...
+kernel http://${server_ip}:8080/boot/memdisk iso
+initrd http://${server_ip}:8080/images/hbcd_15_2.iso
+boot || goto failed
+
+
+:hbcd_15_2_mem
+echo Loading Hiren's BootCD 15.2 (Classic Mini XP & DOS) (Memdisk RAM - Safe ISO) into RAM via Memdisk (Safe ISO mode)...
+kernel http://${server_ip}:8080/boot/memdisk iso
+initrd http://${server_ip}:8080/images/hbcd_15_2.iso
+boot || goto failed
 
 
 :no_os
