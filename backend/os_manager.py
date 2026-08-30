@@ -487,8 +487,17 @@ class OSManager:
                                 "is_legacy": False
                             })
                             installed.append({
+                                "slug": f"{slug}_grub",
+                                "name": f"{os_name} (Native Grub4Dos - No Memdisk)",
+                                "type": "rescue_grub",
+                                "path_boot": str(child),
+                                "path_payload": str(payload_dir),
+                                "size_str": f"{size_mb / 1024:.2f} GB" if size_mb > 1024 else f"{size_mb:.0f} MB",
+                                "is_legacy": False
+                            })
+                            installed.append({
                                 "slug": f"{slug}_mem",
-                                "name": f"{os_name} (Memdisk RAM - Safe ISO)",
+                                "name": f"{os_name} (Memdisk RAM - Drive Shield)",
                                 "type": "rescue_memdisk",
                                 "path_boot": str(child),
                                 "path_payload": str(payload_dir),
@@ -1031,21 +1040,33 @@ sanboot --no-describe {http_base}/images/{base_slug}.iso || goto failed
                 boot_targets.append(f"""
 :{slug}
 echo Booting {name} via HTTP SAN (Instant Direct Loopback)...
-sanboot --no-describe {http_base}/images/{slug}.iso || goto {slug}_fallback
+sanboot --no-describe {http_base}/images/{slug}.iso || prompt --timeout 3000 [!] SANBoot failed. Trying Native Grub4Dos... || goto {slug}_grub
 
-:{slug}_fallback
-echo Fallback: Loading {name} into RAM via Memdisk (Safe ISO mode)...
-kernel {http_base}/boot/memdisk iso
+:{slug}_grub
+echo Launching {name} via Native Grub4Dos...
+chain {http_base}/boot/{slug}/grldr keeppxe || chain tftp://${{server_ip}}/grldr keeppxe || goto {slug}_mem
+
+:{slug}_mem
+echo Loading {name} into RAM via Memdisk (Drive Shield Mode)...
+kernel {http_base}/boot/memdisk iso raw nopass
 initrd {http_base}/images/{slug}.iso
 boot || goto failed
+""")
+            elif os_type == "rescue_grub":
+                base_slug = slug.removesuffix("_grub")
+                menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
+                boot_targets.append(f"""
+:{slug}
+echo Launching {name} via Native Grub4Dos...
+chain {http_base}/boot/{base_slug}/grldr keeppxe || chain tftp://${{server_ip}}/grldr keeppxe || goto failed
 """)
             elif os_type == "rescue_memdisk":
                 base_slug = slug.removesuffix("_mem")
                 menu_items.append(f"item --key {k} {slug:<18} [{k.upper()}] {name}")
                 boot_targets.append(f"""
 :{slug}
-echo Loading {name} into RAM via Memdisk (Safe ISO mode)...
-kernel {http_base}/boot/memdisk iso
+echo Loading {name} into RAM via Memdisk (Drive Shield Mode)...
+kernel {http_base}/boot/memdisk iso raw nopass
 initrd {http_base}/images/{base_slug}.iso
 boot || goto failed
 """)
