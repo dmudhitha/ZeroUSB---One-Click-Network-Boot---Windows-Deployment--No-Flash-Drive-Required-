@@ -919,15 +919,33 @@ wpeutil reboot
         finally:
             self._is_running = False
 
-    def remove_os(self, os_slug: str, server_ip: str, on_log: Optional[Callable[[str], None]] = None) -> Tuple[bool, str]:
+    def remove_os(
+        self,
+        os_slug: str,
+        server_ip: str,
+        http_port: int = 8080,
+        on_log: Optional[Callable[[str], None]] = None
+    ) -> Tuple[bool, str]:
         """
         Removes a specific OS from disk and updates the iPXE boot menu.
         """
         log = on_log or (lambda msg: None)
         try:
             log(f"[*] Removing OS Profile [{os_slug}]...")
+            meta = self._load_meta()
 
-            if os_slug == "default_windows":
+            # Find base slug in metadata or fallback
+            base_slug = os_slug
+            if os_slug not in meta:
+                for k in meta:
+                    if not k.startswith("_") and (os_slug == k or os_slug.startswith(k + "_")):
+                        base_slug = k
+                        break
+
+            slugs_to_clean = {os_slug, base_slug}
+            os_display_name = meta.get(base_slug, {}).get("name", os_slug)
+
+            if base_slug == "default_windows" or os_slug == "default_windows":
                 # Legacy root folders
                 samba_win = self.srv_samba / "windows"
                 if samba_win.exists():
@@ -936,34 +954,55 @@ wpeutil reboot
                 for f in ["BCD", "bcd", "boot.sdi", "boot.wim"]:
                     (self.srv_http_boot / f).unlink(missing_ok=True)
             else:
-                # Remove named boot directory
-                boot_dir = self.srv_http_boot / os_slug
-                if boot_dir.exists():
-                    shutil.rmtree(boot_dir, ignore_errors=True)
-                    log(f"  [✓] Removed boot assets ({boot_dir})")
+                for s in slugs_to_clean:
+                    # Remove named boot directory
+                    boot_dir = self.srv_http_boot / s
+                    if boot_dir.exists():
+                        shutil.rmtree(boot_dir, ignore_errors=True)
+                        log(f"  [✓] Removed boot assets ({boot_dir})")
 
-                # Remove named samba directory
-                samba_dir = self.srv_samba / os_slug
-                if samba_dir.exists():
-                    shutil.rmtree(samba_dir, ignore_errors=True)
-                    log(f"  [✓] Removed Samba payload ({samba_dir})")
+                    # Remove named samba directory
+                    samba_dir = self.srv_samba / s
+                    if samba_dir.exists():
+                        shutil.rmtree(samba_dir, ignore_errors=True)
+                        log(f"  [✓] Removed Samba payload ({samba_dir})")
 
-                # Remove ISO image if Linux
-                iso_img = self.srv_http_images / f"{os_slug}.iso"
-                if iso_img.exists():
-                    iso_img.unlink(missing_ok=True)
-                    log(f"  [✓] Removed ISO image ({iso_img})")
+                    # Remove ISO image if Linux / Rescue
+                    iso_img = self.srv_http_images / f"{s}.iso"
+                    if iso_img.exists():
+                        iso_img.unlink(missing_ok=True)
+                        log(f"  [✓] Removed ISO image ({iso_img})")
+
+                # If HBCD rescue suite, also clean up TFTP hardlinked files
+                if "hbcd" in base_slug.lower() or "rescue" in base_slug.lower():
+                    tftp_hbcd = self.srv_tftp / "HBCD"
+                    if tftp_hbcd.exists():
+                        shutil.rmtree(tftp_hbcd, ignore_errors=True)
+                        log(f"  [✓] Cleaned up TFTP rescue assets ({tftp_hbcd})")
 
             # Remove from metadata
-            meta = self._load_meta()
+            meta.pop(base_slug, None)
             meta.pop(os_slug, None)
+
+            # Clean from _order list
+            if "_order" in meta and isinstance(meta["_order"], list):
+                meta["_order"] = [
+                    x for x in meta["_order"]
+                    if x not in slugs_to_clean and not any(x.startswith(s + "_") for s in slugs_to_clean)
+                ]
+
+            # Reset default_boot if it pointed to any deleted slug
+            curr_def = meta.get("default_boot", "")
+            if curr_def in slugs_to_clean or any(curr_def.startswith(s + "_") for s in slugs_to_clean):
+                meta["default_boot"] = meta["_order"][0] if meta.get("_order") else ""
+
             self._save_meta(meta)
 
-            # Rebuild iPXE Menu
-            self.generate_ipxe_menu(server_ip)
+            # Rebuild iPXE Menu with current active HTTP port
+            self.generate_ipxe_menu(server_ip, http_port)
 
-            log(f"[✓] OS Profile [{os_slug}] successfully removed and iPXE menu updated!")
-            return True, f"OS [{os_slug}] removed successfully."
+            log(f"[✓] OS Profile [{os_display_name}] successfully removed and iPXE menu updated!")
+            return True, f"OS [{os_display_name}] removed successfully."
         except Exception as e:
             log(f"[ERROR] Failed to remove OS [{os_slug}]: {str(e)}")
             return False, str(e)

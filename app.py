@@ -79,6 +79,7 @@ class NetworkInstallerApp(ctk.CTk):
         self.selected_category_var = ctk.StringVar(value="All Systems")
         self.selected_preset_var = ctk.StringVar(value="Windows 10 (64-bit)")
         self.selected_remove_os_var = ctk.StringVar()
+        self._remove_slug_map = {}
 
         # Build UI
         self._create_header()
@@ -1019,9 +1020,23 @@ class NetworkInstallerApp(ctk.CTk):
                 )
                 btn_tab_down.pack(side="left", padx=2)
 
+                btn_tab_delete = ctk.CTkButton(
+                    tab_btn_box,
+                    text="🗑️ Delete",
+                    width=75,
+                    height=26,
+                    font=ctk.CTkFont(family="Inter", size=11, weight="bold"),
+                    fg_color=THEME["danger"],
+                    hover_color="#dc2626",
+                    text_color="#ffffff",
+                    command=lambda s=slug, n=item['name']: self._direct_remove_os(s, n)
+                )
+                btn_tab_delete.pack(side="left", padx=2)
+
                 # Remove menu options
                 opt_str = f"{item['name']} ({item['slug']}) - {item['size_str']}"
                 remove_options.append(opt_str)
+                self._remove_slug_map[opt_str] = item['slug']
 
             self.remove_os_menu.configure(values=remove_options)
             self.selected_remove_os_var.set(remove_options[0])
@@ -1218,29 +1233,23 @@ class NetworkInstallerApp(ctk.CTk):
         else:
             messagebox.showerror("Extraction Failed", message)
 
-    def _remove_selected_os(self):
-        selected_text = self.selected_remove_os_var.get()
-        if not selected_text or "No OS" in selected_text:
-            return
-
-        # Extract slug from "Name (slug) - Size"
-        try:
-            slug = selected_text.split("(")[-1].split(")")[0]
-        except Exception:
-            slug = "default_windows"
-
+    def _direct_remove_os(self, slug: str, name: str):
         confirm = messagebox.askyesno(
             "Confirm Removal",
-            f"Are you sure you want to remove [{selected_text}]?\nThis will delete its installation files and update the boot menu."
+            f"Are you sure you want to remove [{name}]?\n\nThis will delete its installation files from disk and update the network boot menu."
         )
         if not confirm:
             return
 
         choice = self.selected_interface_var.get()
         server_ip = choice.split(" - ")[1] if " - " in choice else "192.168.1.41"
+        try:
+            port = int(self.http_port_var.get() or 8080)
+        except ValueError:
+            port = 8080
 
         self.btn_remove_os.configure(state="disabled")
-        success, msg = self.os_manager.remove_os(slug, server_ip, on_log=self.log)
+        success, msg = self.os_manager.remove_os(slug, server_ip, port, on_log=self.log)
         self.btn_remove_os.configure(state="normal")
         self.refresh_installed_os_view()
 
@@ -1248,6 +1257,20 @@ class NetworkInstallerApp(ctk.CTk):
             messagebox.showinfo("OS Removed", msg)
         else:
             messagebox.showerror("Error", msg)
+
+    def _remove_selected_os(self):
+        selected_text = self.selected_remove_os_var.get()
+        if not selected_text or "No OS" in selected_text:
+            return
+
+        slug = self._remove_slug_map.get(selected_text)
+        if not slug:
+            try:
+                slug = selected_text.split("(")[-1].split(")")[0]
+            except Exception:
+                slug = "default_windows"
+
+        self._direct_remove_os(slug, selected_text)
 
     def _start_dep_installation(self):
         self.btn_install_deps.configure(state="disabled")
