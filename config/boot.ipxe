@@ -1,6 +1,6 @@
 #!ipxe
  
-set server_ip 192.168.42.1
+set server_ip 192.168.1.41
 set http_port 8085
 set http_base http://${server_ip}:${http_port}
 
@@ -25,16 +25,24 @@ goto menu
 menu ZeroUSB - Universal Deployment Server [Active Mode: ${mode_label}]
 item --gap --             [ TIP: Press 1, 2, 3, 4, H, or R directly to select ]
 item --gap --             ------------------ Operating Systems -------------------
-item --key 1 win10              [1] Windows 10 (64-bit)
-item --key 2 hbcd_15_2_xp       [2] Hiren's BootCD 15.2 (Classic Mini XP & DOS) - Mini Windows XP (Auto-Boot)
-item --key 3 hbcd_15_2_dos      [3] Hiren's BootCD 15.2 (Classic Mini XP & DOS) - DOS Programs (Auto-Boot)
-item --key 4 hbcd_15_2_grub     [4] Hiren's BootCD 15.2 (Classic Mini XP & DOS) - Full Menu (15s Auto-Boot Timer)
-item --key 5 hbcd_15_2_mem      [5] Hiren's BootCD 15.2 (Classic Mini XP & DOS) (Memdisk RAM - Drive Shield)
+item --key 1 hbcd_pe            [1] Hiren's BootCD PE (Modern Win10 PE) (Requires 6GB+ RAM)
+item --key 2 win10              [2] Windows 10 (64-bit)
 item --gap --             ------------------ Local Actions -----------------------
 item --key h boot_local           [H] Boot from Local Storage (SSD / NVMe / HDD)
 item --key d ipxe_shell           [D] iPXE Diagnostic Shell
 item --key r reboot               [R] Reboot Computer
-choose --timeout 5000 --default win10 target && goto ${target}
+choose --timeout 5000 --default hbcd_pe target && goto ${target}
+
+
+:hbcd_pe
+echo Booting Hiren's BootCD PE (Modern Win10 PE) (Requires 6GB+ RAM) over HTTP...
+kernel http://${server_ip}:8085/boot/${wimboot_file}
+initrd http://${server_ip}:8085/boot/hbcd_pe/${bootmgr_file}  ${bootmgr_name}
+initrd http://${server_ip}:8085/boot/hbcd_pe/BCD                bcd
+initrd http://${server_ip}:8085/boot/hbcd_pe/boot.sdi           boot.sdi
+initrd http://${server_ip}:8085/boot/hbcd_pe/boot.wim           boot.wim
+boot || goto failed
+
 
 
 :win10
@@ -46,28 +54,6 @@ initrd http://${server_ip}:8085/boot/win10/boot.sdi           boot.sdi
 initrd http://${server_ip}:8085/boot/win10/boot.wim           boot.wim
 boot || goto failed
 
-
-
-:hbcd_15_2_xp
-echo Auto-booting Mini Windows XP (No Keyboard Required)...
-chain http://${server_ip}:8085/boot/hbcd_15_2/grldr keeppxe --config-file="configfile (pd)/menu-minixp.lst" || chain tftp://${server_ip}/grldr keeppxe --config-file="configfile (pd)/menu-minixp.lst" || goto failed
-
-
-:hbcd_15_2_dos
-echo Auto-booting DOS Diagnostic Programs (No Keyboard Required)...
-chain http://${server_ip}:8085/boot/hbcd_15_2/grldr keeppxe --config-file="configfile (pd)/menu-dos.lst" || chain tftp://${server_ip}/grldr keeppxe --config-file="configfile (pd)/menu-dos.lst" || goto failed
-
-
-:hbcd_15_2_grub
-echo Launching Hiren's BootCD 15.2 Full Menu (Default: Mini XP in 15s)...
-chain http://${server_ip}:8085/boot/hbcd_15_2/grldr keeppxe || chain tftp://${server_ip}/grldr keeppxe || goto failed
-
-
-:hbcd_15_2_mem
-echo Loading Hiren's BootCD 15.2 (Classic Mini XP & DOS) (Memdisk RAM - Drive Shield) into RAM via Memdisk (Drive Shield Mode)...
-kernel http://${server_ip}:8085/boot/memdisk iso raw nopass
-initrd http://${server_ip}:8085/images/hbcd_15_2.iso
-boot || goto failed
 
 
 :no_os

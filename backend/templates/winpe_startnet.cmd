@@ -7,6 +7,13 @@ echo =================================================================
 echo.
 echo [1/4] Initializing Windows PE Environment...
 wpeinit
+
+rem Load injected network and chipset drivers for modern laptops (Asus, Lenovo, Dell, HP)
+if exist X:\Drivers (
+    echo       [*] Detecting and loading network drivers...
+    for /r X:\Drivers %%i in (*.inf) do drvload "%%i" > nul 2>&1
+)
+
 wpeutil InitializeNetwork > nul 2>&1
 net start lanmanworkstation > nul 2>&1
 echo       [OK] WinPE network subsystem started.

@@ -801,8 +801,13 @@ wpeutil reboot
                             f"add {tmp_script} /Windows/System32/startnet.cmd"
                         ]
 
-                        # Add Atheros / Realtek network drivers if available in /tmp/ar8162_ansi
-                        if Path('/tmp/ar8162_ansi').exists():
+                        # Add universal network drivers (Intel I219/I225, Realtek PCIe & USB-C GbE)
+                        drv_dir = self.base_dir / "srv" / "drivers" / "universal_network"
+                        if drv_dir.exists():
+                            update_directives.append(f"add {drv_dir} /Drivers")
+                        elif Path('/tmp/universal_drivers').exists():
+                            update_directives.append("add /tmp/universal_drivers /Drivers")
+                        elif Path('/tmp/ar8162_ansi').exists():
                             update_directives.append("add /tmp/ar8162_ansi /Drivers/Atheros_AR8162")
 
                         tmp_cmd.write_text('\n'.join(update_directives) + '\n', encoding='utf-8')
