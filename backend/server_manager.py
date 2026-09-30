@@ -29,6 +29,20 @@ class ServerManager:
     def is_active(self) -> bool:
         return self._is_active
 
+    def _find_free_port(self, preferred_port: int, host: str = '0.0.0.0') -> int:
+        """Finds a free port, starting with preferred_port, then safe fallback ports."""
+        for port in [preferred_port, 8085, 8088, 8090, 8888, 9080]:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind((host, port))
+                    return port
+            except OSError:
+                continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind((host, 0))
+            return s.getsockname()[1]
+
     def start(
         self,
         interface: str,
@@ -41,7 +55,12 @@ class ServerManager:
         log = on_log or (lambda msg: None)
         self.current_interface = interface
         self.current_ip = server_ip
-        self.current_http_port = http_port
+
+        # Auto-detect if requested port is in use (e.g. Docker container on 8080)
+        actual_port = self._find_free_port(http_port)
+        if actual_port != http_port:
+            log(f"  [!] Port {http_port} is busy (occupied by Docker/another service). Automatically switched to port {actual_port}!")
+        self.current_http_port = actual_port
 
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.pid_dir.mkdir(parents=True, exist_ok=True)
@@ -50,14 +69,21 @@ class ServerManager:
             log(f"[*] Starting ZeroUSB PXE Services on {interface} ({server_ip}) [Mode: {dhcp_mode.upper()} | Target: {boot_mode.upper()}]...")
 
             # 1. Start Python HTTP Server
-            log(f"[+] Starting High-Speed HTTP Streaming Server on port {http_port}...")
-            self._start_http_server(http_port, log)
+            log(f"[+] Starting High-Speed HTTP Streaming Server on port {actual_port}...")
+            self._start_http_server(actual_port, log)
 
-            # 2. Start Dnsmasq, Firewall & Network Config via unified controller
+            # 2. Re-generate iPXE menu to use the active HTTP streaming port
+            try:
+                from backend.os_manager import OSManager
+                OSManager(self.base_dir).generate_ipxe_menu(server_ip, actual_port)
+            except Exception as ex:
+                log(f"  [!] Menu generation note: {ex}")
+
+            # 3. Start Dnsmasq, Firewall & Network Config via unified controller
             log(f"[+] Starting Dnsmasq ({dhcp_mode.upper()} mode, Target: {boot_mode.upper()}, TFTP port 69) on {interface}...")
-            self._start_dnsmasq(interface, server_ip, http_port, dhcp_mode, boot_mode, log)
+            self._start_dnsmasq(interface, server_ip, actual_port, dhcp_mode, boot_mode, log)
 
-            # 3. Check Samba service & dynamic shares
+            # 4. Check Samba service & dynamic shares
             log("[+] Verifying Samba shares for Windows setup...")
             self._check_samba(log)
 
@@ -323,11 +349,11 @@ dhcp-userclass=set:ipxe,iPXE
         conf_path.write_text(conf_content, encoding='utf-8')
         ctrl_script = str(self.base_dir / "scripts" / "server-ctl.sh")
         if os.geteuid() == 0:
-            cmd = [ctrl_script, "start", str(conf_path), interface, server_ip]
+            cmd = [ctrl_script, "start", str(conf_path), interface, server_ip, str(http_port)]
         elif shutil.which('pkexec'):
-            cmd = ['pkexec', ctrl_script, "start", str(conf_path), interface, server_ip]
+            cmd = ['pkexec', ctrl_script, "start", str(conf_path), interface, server_ip, str(http_port)]
         else:
-            cmd = ['sudo', ctrl_script, "start", str(conf_path), interface, server_ip]
+            cmd = ['sudo', ctrl_script, "start", str(conf_path), interface, server_ip, str(http_port)]
 
         self.dnsmasq_process = subprocess.Popen(
             cmd,

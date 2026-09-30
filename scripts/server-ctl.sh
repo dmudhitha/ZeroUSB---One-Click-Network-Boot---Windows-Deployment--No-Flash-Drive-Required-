@@ -10,6 +10,7 @@ ACTION="${1:-status}"
 CONF_FILE="${2:-/tmp/dnsmasq_gui_runtime.conf}"
 INTERFACE="${3:-enp3s0}"
 SERVER_IP="${4:-192.168.42.1}"
+HTTP_PORT="${5:-8080}"
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -53,7 +54,7 @@ case "${ACTION}" in
                 ufw allow 68/udp &>/dev/null || true
                 ufw allow 69/udp &>/dev/null || true
                 ufw allow 4011/udp &>/dev/null || true
-                ufw allow 8080/tcp &>/dev/null || true
+                ufw allow "${HTTP_PORT}/tcp" &>/dev/null || true
                 ufw allow 445/tcp &>/dev/null || true
                 ufw allow 139/tcp &>/dev/null || true
                 ufw allow 137/udp &>/dev/null || true
@@ -75,9 +76,6 @@ case "${ACTION}" in
             fi
         done
 
-        if command -v systemctl &>/dev/null; then
-            systemctl is-active dnsmasq &>/dev/null || systemctl start dnsmasq 2>/dev/null || true
-        fi
         systemctl restart smbd 2>/dev/null || true
         sleep 0.3
 
@@ -104,13 +102,9 @@ case "${ACTION}" in
             fi
         done
         pkill -f "http_server.py" 2>/dev/null || true
-        pkill -f "http.server 8080" 2>/dev/null || true
+        pkill -f "http.server" 2>/dev/null || true
         if command -v nmcli &>/dev/null; then
             nmcli device set "${INTERFACE}" managed yes 2>/dev/null || true
-        fi
-        # Ensure host system DNS resolver remains running
-        if command -v systemctl &>/dev/null; then
-            systemctl is-active dnsmasq &>/dev/null || systemctl start dnsmasq 2>/dev/null || true
         fi
         echo "STOPPED"
         ;;

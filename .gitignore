@@ -77,6 +77,8 @@ srv/http/boot/boot.wim
 srv/http/boot/install.wim
 srv/tftp/boot/*
 !srv/tftp/boot/.gitkeep
+srv/tftp/HBCD*
+Screenshot/
 
 # User Runtime Dynamic Database / Profiles
 config/installed_os.json

@@ -1132,7 +1132,9 @@ class NetworkInstallerApp(ctk.CTk):
                 on_log=self.log
             )
             if success:
-                self.status_bar_lbl.configure(text=f"Server LIVE on {ip}! Ready for client multi-OS network boot.")
+                active_port = self.server_manager.current_http_port
+                self.http_port_var.set(str(active_port))
+                self.status_bar_lbl.configure(text=f"Server LIVE on {ip}:{active_port}! Ready for client multi-OS network boot.")
             else:
                 messagebox.showerror("Server Error", "Failed to start network server. Check live logs tab.")
 
